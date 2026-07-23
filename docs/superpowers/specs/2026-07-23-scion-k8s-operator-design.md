@@ -100,6 +100,8 @@ Scaffolded with operator-sdk/kubebuilder (controller-runtime). Duties:
   plan; node annotations are avoided).
 - Handle upgrades: new operator version rolls the DaemonSet
   (RollingUpdate, maxUnavailable 10%).
+- Run the registrar controller: reconcile the AS-side SIG registration
+  for the current node set via the configured backend (see 3.6).
 - OpenShift/vanilla divergence is isolated: SCC management is gated on
   API-group availability; on vanilla k8s the operator skips SCC and
   relies on namespace Pod Security Admission `privileged`.
@@ -120,6 +122,8 @@ revisit before any public release).
 - `acceptPolicy`: allowed remote ISD-ASes and IP prefix filters for
   learned routes.
 - `dataplane`: tun device name (default `scion0`), MTU overrides.
+- `registrar`: backend (`manual` | `http` | `anapaya`), endpoint URL,
+  credential secret ref (see 3.6).
 - `nodeSelector` / tolerations passthrough for the DaemonSet.
 
 `status`:
@@ -127,6 +131,8 @@ revisit before any public release).
 - `isdAs`: the ISD-AS the cluster is attached to.
 - `nodes`: readyCount, totalCount, degraded list with reasons.
 - `prefixes`: advertised count, learned count.
+- `registrar`: registered node count, desired SIG list (for `manual`
+  mode), last sync time/error.
 
 ### 3.3 Node agent
 
@@ -172,15 +178,37 @@ revisit before any public release).
 - DaemonSet: tolerations for all node roles, priorityClassName
   `system-node-critical`.
 
-### 3.6 External prerequisite: AS-side registration
+### 3.6 AS-side auto-registration (registrar)
 
-Nodes must be registered as SIGs in the AS (`sigs` entries in the AS
-`topology.json`, or the Anapaya EDGE equivalent via its appliance API).
-v1 stance: changes to the node set (scale-up/down) require an AS-side
-topology update, performed by the AS operator. Documented as a known
-limitation; automation via the Anapaya appliance API (an OpenAPI-based
-REST API; a generated client exists in `Anapaya/ansible-collections`)
-is a candidate follow-up.
+Remote SIGs discover this cluster's node SIGs via the AS control
+service's `DiscoveryService.Gateways` RPC, fed from `sigs` entries in the
+AS `topology.json` (or the Anapaya EDGE equivalent). Egress works
+without registration; inbound requires it. To support node churn and
+autoscaling, the operator includes a **registrar controller**: it
+watches Nodes and reconciles the AS-side SIG list through a pluggable
+backend interface (backend selected in `spec.registrar`):
+
+- `manual` (default): no automation; the operator publishes the desired
+  SIG list in `status` and a runbook documents the AS-side update.
+- `http`: posts node join/leave to a small **registrar service** shipped
+  by this project and run alongside the open-source control service (AS
+  infrastructure, outside the cluster). The registrar authenticates
+  requests (token from a Secret), patches `sigs` in `topology.json`, and
+  reloads the control service. Used by dev/e2e environments and OSS ASes.
+- `anapaya`: CRUDs gateway entries via the Anapaya appliance management
+  REST API (OpenAPI; a generated client exists in
+  `Anapaya/ansible-collections`), credential from a Secret. Developed
+  against a stub derived from the OpenAPI models until real appliance
+  access is available; planned for v1.x, interface defined in v1.
+
+Deregistration: registrar removes entries on node deletion; the
+registrar service additionally expires entries whose agent stops
+heartbeating (protects against unclean cluster removal).
+
+In parallel, an upstream design proposal will be filed with
+`scionproto/scion` for TTL/heartbeat-based dynamic SIG self-registration
+in the control service, which would eventually collapse the backends
+into one standard mechanism.
 
 ## 4. Ecosystem fit
 
@@ -210,17 +238,23 @@ is a candidate follow-up.
   packages may move between releases; version bumps are gated by e2e.
 - Operator down: agents keep running (data plane unaffected); only
   reconciliation/status pauses.
+- Registrar backend unreachable: existing registrations persist
+  (inbound keeps working for current nodes); new nodes get egress-only
+  connectivity until sync succeeds; Degraded condition and alert fire.
 
 ## 6. Testing
 
 - Unit: route programming (mocked netlink), prefix guardrails, bootstrap
-  parsing/verification, SGRP advertisement composition, CRD validation.
+  parsing/verification, SGRP advertisement composition, CRD validation,
+  registrar backends (HTTP registrar and Anapaya API stubbed).
 - Integration: docker-compose SCION topology (scionproto `tools/`) with
   the agent in network namespaces; bidirectional ping/TCP between two
-  simulated nodes across the SCION topology.
+  simulated nodes across the SCION topology; registrar service
+  patching `topology.json` and reloading the control service.
 - E2E: OpenShift cluster(s) in CI attached to a dev AS; verify pod↔pod
-  cross-cluster over SCION, inbound reachability, node reboot, agent and
-  operator rolling updates, guardrail enforcement, status aggregation.
+  cross-cluster over SCION, inbound reachability, node reboot, node
+  add/remove with automatic (de)registration, agent and operator rolling
+  updates, guardrail enforcement, status aggregation.
   SCIONLab user-AS available for realistic manual testing.
 
 ## 7. Non-goals (v1)
@@ -229,7 +263,8 @@ is a candidate follow-up.
 - Cluster control-plane/boot-time traffic over SCION.
 - NAT traversal between node and border router.
 - IPv6-only clusters (designed for, not tested).
-- Automatic AS-side node registration (follow-up).
+- Anapaya registrar backend implementation (interface and stub tests in
+  v1; real-appliance validation in v1.x).
 - Multipath/path-policy tuning beyond defaults.
 
 ## 8. Risks
@@ -242,4 +277,9 @@ is a candidate follow-up.
   `privileged: true` initially.
 - Per-node SIG scalability: N nodes × M remote SIGs sessions; SGRP fan-out
   needs measurement at moderate cluster sizes.
+- Registrar: the HTTP registrar service is new AS-side infrastructure to
+  operate and secure; the Anapaya backend depends on an appliance API we
+  can only stub until real access exists (API observed at version 0.1.0,
+  may change); control-service topology reload behavior on `sigs`
+  changes must be validated.
 - AS-side registration friction with autoscaling node pools.
