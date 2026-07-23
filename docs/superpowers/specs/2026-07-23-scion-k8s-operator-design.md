@@ -8,8 +8,15 @@ Repo: github.com/mkowalski/scion-k8s-operator
 
 Make every node of an OpenShift cluster a first-class SCION endhost with
 transparent, bidirectional IP-over-SCION connectivity, delivered as a
-Kubernetes operator. OpenShift 4.x is the primary target; a clean path to
+Kubernetes operator. OpenShift 5.x is the primary target; a clean path to
 vanilla Kubernetes is preserved but not implemented in v1.
+
+Note: the platform research backing this design (SCC behavior, OVN-K
+shared-gateway SNAT, user-workload monitoring, MCO alternatives) was
+validated against OpenShift 4.x documentation and code. These mechanisms
+are expected to carry over to 5.x, but each assumption must be
+re-verified against 5.x during implementation; divergences (e.g.
+bootc-based RHCOS changes) are handled in the implementation plan.
 
 "First-class endhost" means each node:
 
