@@ -1,7 +1,7 @@
 IMG_REGISTRY ?= quay.io/mkowalski
 VERSION ?= 0.1.0-dev
 
-.PHONY: build test lint images manifests
+.PHONY: build test lint images manifests controller-gen
 
 build:
 	CGO_ENABLED=0 go build -o bin/agent ./cmd/agent
@@ -17,9 +17,10 @@ lint:
 manifests: controller-gen
 	$(CONTROLLER_GEN) crd rbac:roleName=scion-operator paths=./api/... paths=./internal/operator/... output:crd:dir=config/crd
 
-CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
+CONTROLLER_TOOLS_VERSION ?= v0.21.0
+CONTROLLER_GEN = $(CURDIR)/bin/controller-gen-$(CONTROLLER_TOOLS_VERSION)
 controller-gen:
-	test -x $(CONTROLLER_GEN) || GOBIN=$(shell pwd)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@latest
+	test -x $(CONTROLLER_GEN) || { GOBIN=$(CURDIR)/bin go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_TOOLS_VERSION) && mv $(CURDIR)/bin/controller-gen $(CONTROLLER_GEN); }
 
 images:
 	podman build -f build/Dockerfile.agent -t $(IMG_REGISTRY)/scion-node-agent:$(VERSION) .
