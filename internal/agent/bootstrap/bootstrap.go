@@ -100,21 +100,19 @@ func fetchFrom(ctx context.Context, base, dir string) error {
 		trcs[fmt.Sprintf("ISD%d-B%d-S%d.trc", e.ID.ISD, e.ID.Base, e.ID.Serial)] = raw
 	}
 	// Pinning guard: a TRC whose name is pinned (Secret mounted by the
-	// operator at <dir>/../pinned-trcs) must never change on disk. Check all
-	// pins before writing anything, so a violation leaves the cache intact.
+	// operator at <dir>/../pinned-trcs) must match the pin file's bytes
+	// exactly. Check all pins before writing anything, so a violation leaves
+	// the cache intact.
 	for name, raw := range trcs {
-		if !isPinned(dir, strings.TrimSuffix(name, ".trc")) {
-			continue
-		}
-		existing, err := os.ReadFile(filepath.Join(dir, "certs", name))
+		pin, err := os.ReadFile(filepath.Join(dir, "..", "pinned-trcs", name))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return err
 		}
-		if string(existing) != string(raw) {
-			return fmt.Errorf("pinned TRC %s: discovery server %s served different bytes than cached copy; refusing to update", name, base)
+		if string(pin) != string(raw) {
+			return fmt.Errorf("pinned TRC %s: discovery server %s served different bytes than pin; refusing to update", name, base)
 		}
 	}
 	// Write TRCs before topology: the daemon reacts to topology.json, so the
@@ -125,13 +123,6 @@ func fetchFrom(ctx context.Context, base, dir string) error {
 		}
 	}
 	return atomicWrite(filepath.Join(dir, "topology.json"), topo)
-}
-
-// isPinned reports whether a TRC name is pinned via a Secret mounted at
-// <dir>/../pinned-trcs/<name>.trc.
-func isPinned(dir, name string) bool {
-	_, err := os.Stat(filepath.Join(dir, "..", "pinned-trcs", name+".trc"))
-	return err == nil
 }
 
 // Run fetches once immediately, then re-fetches every interval until ctx is

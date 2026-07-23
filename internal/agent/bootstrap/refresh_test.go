@@ -52,16 +52,12 @@ func TestFetchRejectsPinnedTRCChange(t *testing.T) {
 
 	root := t.TempDir()
 	dir := filepath.Join(root, "cfg")
-	if err := os.MkdirAll(filepath.Join(dir, "certs"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "certs", "ISD1-B1-S1.trc"), []byte("old-trc-bytes"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(filepath.Join(root, "pinned-trcs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "pinned-trcs", "ISD1-B1-S1.trc"), []byte("old-trc-bytes"), 0o644); err != nil {
+	// Pin bytes differ from what the server serves; no cached copy exists,
+	// so the pin file content itself must be the source of truth.
+	if err := os.WriteFile(filepath.Join(root, "pinned-trcs", "ISD1-B1-S1.trc"), []byte("pinned-trc-bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -69,14 +65,45 @@ func TestFetchRejectsPinnedTRCChange(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Fetch to fail for pinned TRC change")
 	}
-	got, readErr := os.ReadFile(filepath.Join(dir, "certs", "ISD1-B1-S1.trc"))
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if string(got) != "old-trc-bytes" {
-		t.Fatalf("pinned TRC was overwritten: %q", got)
+	if _, statErr := os.Stat(filepath.Join(dir, "certs", "ISD1-B1-S1.trc")); !os.IsNotExist(statErr) {
+		t.Fatalf("TRC should not be written on pin violation, stat err: %v", statErr)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "topology.json")); !os.IsNotExist(statErr) {
 		t.Fatalf("topology.json should not be written on pin violation, stat err: %v", statErr)
+	}
+}
+
+func TestFetchAcceptsMatchingPinnedTRC(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/topology", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"isd_as":"1-ff00:0:112"}`))
+	})
+	mux.HandleFunc("/trcs", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"id":{"isd":1,"base_number":1,"serial_number":1}}]`))
+	})
+	mux.HandleFunc("/trcs/isd1-b1-s1/blob", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("pinned-trc-bytes"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "cfg")
+	if err := os.MkdirAll(filepath.Join(root, "pinned-trcs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pinned-trcs", "ISD1-B1-S1.trc"), []byte("pinned-trc-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Fetch(context.Background(), &URLDiscoverer{BaseURL: srv.URL}, dir); err != nil {
+		t.Fatalf("Fetch failed despite matching pin: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "certs", "ISD1-B1-S1.trc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "pinned-trc-bytes" {
+		t.Fatalf("unexpected TRC content: %q", got)
 	}
 }
