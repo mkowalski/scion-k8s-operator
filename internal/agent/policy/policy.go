@@ -41,6 +41,11 @@ type Input struct {
 // For each remote IA it emits advertise rules (local -> remote) for every
 // advertised net, and accept rules (remote -> local) for the full IPv4
 // space minus ForbiddenCIDRs.
+//
+// The rendered policy relies on the SIG's default-deny behavior: the
+// gateway loads routing policies with DefaultAction Reject (scion v0.15.0
+// gateway/loader.go:113), so any traffic not matched by an explicit accept
+// rule here is rejected; we never need (and never emit) reject rules.
 func RenderRoutingPolicy(in Input) (string, error) {
 	accepted, err := prepare(in)
 	if err != nil {
@@ -60,8 +65,13 @@ func RenderRoutingPolicy(in Input) (string, error) {
 // gateway/control/sessionpolicy.go (LegacySessionPolicyAdapter.Parse);
 // sample at dist/conffiles/gateway.json.
 type trafficPolicyDoc struct {
-	ASes          map[string]trafficPolicyAS `json:"ASes"`
-	ConfigVersion uint64                     `json:"ConfigVersion"`
+	ASes map[string]trafficPolicyAS `json:"ASes"`
+	// ConfigVersion is parsed but ignored by scion v0.15.0
+	// (gateway/control/sessionpolicy.go: cfg.ConfigVersion is never read
+	// after unmarshal); reloads are SIGHUP-driven and unconditional, so a
+	// constant value is safe today. Re-check this on scion upgrades in
+	// case newer versions start comparing versions to skip reloads.
+	ConfigVersion uint64 `json:"ConfigVersion"`
 }
 
 type trafficPolicyAS struct {
