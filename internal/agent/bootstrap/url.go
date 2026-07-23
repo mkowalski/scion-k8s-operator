@@ -7,6 +7,7 @@ type URLDiscoverer struct {
 	BaseURL string
 }
 
+// BaseURLs returns the configured discovery server URL as the only candidate.
 func (d *URLDiscoverer) BaseURLs(context.Context) ([]string, error) {
 	return []string{d.BaseURL}, nil
 }
