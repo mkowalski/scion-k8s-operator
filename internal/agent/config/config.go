@@ -1,0 +1,75 @@
+// Package config loads scion-node-agent configuration from environment
+// variables (set by the operator on the DaemonSet from ScionNetwork spec).
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+)
+
+type Config struct {
+	NodeName         string        // downward API
+	BootstrapMode    string        // url|dns|dhcp|mdns
+	DiscoveryURL     string        // required for mode=url
+	DNSDomain        string        // for mode=dns; default: system search domain
+	DHCPInterface    string        // for mode=dhcp
+	RefreshInterval  time.Duration // topology/TRC re-fetch
+	StateDir         string        // hostPath cache, default /var/lib/scion-node-agent
+	TunName          string        // default scion0
+	AdvertisePodCIDR bool
+	AdvertiseNodeIP  bool
+	EnableDaemonAPI  bool   // expose sciond gRPC on 127.0.0.1:30255
+	AcceptISDASes    string // comma-separated remote ISD-ASes allowed by SGRP accept policy
+	ForbiddenCIDRs   string // comma-separated cluster/service/machine CIDRs (guardrails)
+	MetricsAddr      string // default :9465
+}
+
+func FromEnv() (Config, error) {
+	c := Config{
+		NodeName:         os.Getenv("NODE_NAME"),
+		BootstrapMode:    getenv("SCION_BOOTSTRAP_MODE", "url"),
+		DiscoveryURL:     os.Getenv("SCION_DISCOVERY_URL"),
+		DNSDomain:        os.Getenv("SCION_DNS_DOMAIN"),
+		DHCPInterface:    os.Getenv("SCION_DHCP_INTERFACE"),
+		StateDir:         getenv("SCION_STATE_DIR", "/var/lib/scion-node-agent"),
+		TunName:          getenv("SCION_TUN_NAME", "scion0"),
+		AdvertisePodCIDR: getenvBool("SCION_ADVERTISE_POD_CIDR", true),
+		AdvertiseNodeIP:  getenvBool("SCION_ADVERTISE_NODE_IP", true),
+		EnableDaemonAPI:  getenvBool("SCION_ENABLE_DAEMON_API", true),
+		AcceptISDASes:    os.Getenv("SCION_ACCEPT_ISD_ASES"),
+		ForbiddenCIDRs:   os.Getenv("SCION_FORBIDDEN_CIDRS"),
+		MetricsAddr:      getenv("SCION_METRICS_ADDR", ":9465"),
+	}
+	var err error
+	if c.RefreshInterval, err = time.ParseDuration(getenv("SCION_REFRESH_INTERVAL", "1h")); err != nil {
+		return c, fmt.Errorf("SCION_REFRESH_INTERVAL: %w", err)
+	}
+	if c.NodeName == "" {
+		return c, fmt.Errorf("NODE_NAME is required")
+	}
+	if c.BootstrapMode == "url" && c.DiscoveryURL == "" {
+		return c, fmt.Errorf("SCION_DISCOVERY_URL required for bootstrap mode url")
+	}
+	return c, nil
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
+func getenvBool(k string, def bool) bool {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
+}
