@@ -61,7 +61,7 @@ Makefile
 ### Task 1: Repository scaffolding
 
 **Files:**
-- Create: `go.mod`, `Makefile`, `.gitignore`, `hack/boilerplate.go.txt`
+- Create: `go.mod`, `Makefile`, `.gitignore`
 
 - [ ] **Step 1: Initialize module and pin scion**
 
