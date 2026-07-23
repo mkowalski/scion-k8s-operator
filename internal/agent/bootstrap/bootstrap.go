@@ -29,6 +29,22 @@ type Discoverer interface {
 	BaseURLs(ctx context.Context) ([]string, error)
 }
 
+// NewDiscoverer builds a Discoverer for the configured bootstrap mode.
+func NewDiscoverer(mode, url, dnsDomain, iface string) (Discoverer, error) {
+	switch mode {
+	case "url":
+		return &URLDiscoverer{BaseURL: url}, nil
+	case "dns":
+		return &DNSDiscoverer{Domain: dnsDomain}, nil
+	case "dhcp":
+		return &DHCPDiscoverer{Interface: iface}, nil
+	case "mdns":
+		return &MDNSDiscoverer{}, nil
+	default:
+		return nil, fmt.Errorf("unknown bootstrap mode %q", mode)
+	}
+}
+
 type trcID struct {
 	ISD    int `json:"isd"`
 	Base   int `json:"base_number"`
