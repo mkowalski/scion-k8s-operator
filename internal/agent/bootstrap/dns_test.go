@@ -36,3 +36,15 @@ func TestDNSDiscovererNoRecords(t *testing.T) {
 		t.Fatal("expected error for empty SRV result")
 	}
 }
+
+func TestDNSDiscovererRootTarget(t *testing.T) {
+	d := &DNSDiscoverer{
+		Domain: "example.org",
+		lookupSRV: func(ctx context.Context, service, proto, name string) (string, []*net.SRV, error) {
+			return "", []*net.SRV{{Target: ".", Port: 0}}, nil
+		},
+	}
+	if _, err := d.BaseURLs(context.Background()); err == nil {
+		t.Fatal("expected error for '.' SRV target (RFC 2782: service not available)")
+	}
+}

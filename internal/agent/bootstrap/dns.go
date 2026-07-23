@@ -27,7 +27,13 @@ func (d *DNSDiscoverer) BaseURLs(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("SRV _sciondiscovery._tcp.%s: %w", d.Domain, err)
 	}
 	urls := make([]string, 0, len(srvs))
+	// LookupSRV already sorts records by priority and randomizes by weight.
 	for _, s := range srvs {
+		// RFC 2782: a target of "." means the service is decidedly not available.
+		if s.Target == "." {
+			continue
+		}
+		// Plain-http scheme is per the endhost-bootstrap design.
 		urls = append(urls, fmt.Sprintf("http://%s:%d", strings.TrimSuffix(s.Target, "."), s.Port))
 	}
 	if len(urls) == 0 {
