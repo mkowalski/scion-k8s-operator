@@ -241,3 +241,16 @@ func TestRenderRoutingPolicyErrors(t *testing.T) {
 		t.Fatal("expected error with invalid forbidden CIDR")
 	}
 }
+
+// Empty ForbiddenCIDRs would accept 0.0.0.0/0 (a default route), which the
+// guardrail refuses. Rendering must fail safe-by-default in both renderers.
+func TestRenderRejectsEmptyForbiddenCIDRs(t *testing.T) {
+	in := testInput()
+	in.ForbiddenCIDRs = nil
+	if _, err := RenderRoutingPolicy(in); err == nil {
+		t.Fatal("RenderRoutingPolicy: expected error with empty ForbiddenCIDRs")
+	}
+	if _, err := RenderTrafficPolicy(in); err == nil {
+		t.Fatal("RenderTrafficPolicy: expected error with empty ForbiddenCIDRs")
+	}
+}
