@@ -104,12 +104,14 @@ func fetchFrom(ctx context.Context, base, dir string) error {
 	// exactly. Check all pins before writing anything, so a violation leaves
 	// the cache intact.
 	for name, raw := range trcs {
-		pin, err := os.ReadFile(filepath.Join(dir, "..", "pinned-trcs", name))
+		// TRC names are built from integers by our own code, so there is no
+		// traversal risk; filepath.Base is defense in depth.
+		pin, err := os.ReadFile(filepath.Join(dir, "..", "pinned-trcs", filepath.Base(name)))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return err
+			return fmt.Errorf("reading pin for %s: %w", name, err)
 		}
 		if string(pin) != string(raw) {
 			return fmt.Errorf("pinned TRC %s: discovery server %s served different bytes than pin; refusing to update", name, base)
@@ -128,7 +130,8 @@ func fetchFrom(ctx context.Context, base, dir string) error {
 // Run fetches once immediately, then re-fetches every interval until ctx is
 // done. On every fetch that changed topology.json content, it sends a
 // non-blocking notification on changed (used to trigger gateway policy
-// regeneration / reload).
+// regeneration / reload). The notification is topology-only by design:
+// TRC-only changes do not notify.
 func Run(ctx context.Context, d Discoverer, dir string, interval time.Duration,
 	changed chan<- struct{}) error {
 
