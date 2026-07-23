@@ -37,12 +37,19 @@ type Params struct {
 	RoutingPolicyFile string        // IP routing policy
 	TunName           string        // tunnel device name, e.g. scion0
 	NodeIP            net.IP        // node InternalIP; SIG binds ctrl/data here
-	ReloadTrigger     chan struct{} // signaled to trigger policy reload
+	ReloadTrigger     chan struct{} // signaled to trigger policy reload; must not be nil
+	// DebugMux, if non-nil, receives the gateway's diagnostic status pages
+	// (engine, session configurator, IP routing policy, ...). Passing the
+	// agent health server's mux exposes them there; if nil, a private mux
+	// is created and the pages are not served anywhere (Task 11 wires this
+	// into the health server).
+	DebugMux *http.ServeMux
 }
 
 // addrs derives the control, data, and probe UDP addresses from the node
 // IP. Mirrors upstream main.go lines 85-114: data and probe reuse the
-// control IP (and zone, which is empty here) with their own ports.
+// control IP with their own ports. IPv6 zones are deliberately dropped:
+// Kubernetes node InternalIPs are zoneless.
 func addrs(nodeIP net.IP) (ctrl, data, probe *net.UDPAddr) {
 	ctrl = &net.UDPAddr{IP: nodeIP, Port: ctrlPort}
 	data = &net.UDPAddr{IP: nodeIP, Port: dataPort}
@@ -54,6 +61,12 @@ func addrs(nodeIP net.IP) (ctrl, data, probe *net.UDPAddr) {
 // or the gateway fails. Tunnel device creation and route programming
 // happen inside gateway.Gateway.Run.
 func Run(ctx context.Context, p Params) error {
+	if p.ReloadTrigger == nil {
+		// A nil channel blocks forever: Gateway.Run's initial policy load
+		// sends on ConfigReloadTrigger (gateway.go:369) and would silently
+		// deadlock, leaving the gateway without any traffic policy.
+		return serrors.New("ReloadTrigger must not be nil")
+	}
 	asinfo, err := daemon.LoadASInfoFromFile(filepath.Join(p.ConfigDir, "topology.json"))
 	if err != nil {
 		return serrors.Wrap("loading AS info from topology", err)
@@ -91,19 +104,28 @@ func Run(ctx context.Context, p Params) error {
 	// control.RoutingTableSwapper (upstream main.go line 152).
 	routingTable := &dataplane.AtomicRoutingTable{}
 
+	debugMux := p.DebugMux
+	if debugMux == nil {
+		debugMux = http.NewServeMux()
+	}
+
 	// Deviations from upstream main.go (lines 153-176):
-	//   - ID left empty (single gateway per node; upstream default is also "").
+	//   - ID is "scion-node-agent" instead of upstream's default "gateway"
+	//     (config.Gateway.Validate defaults empty ID, config.go:114-116);
+	//     it is only used as the StatusPages HTML title.
 	//   - ConfigReloadTrigger is our policy-regeneration channel instead of
 	//     app.SIGHUPChannel.
 	//   - HTTPEndpoints starts without info/config/log-level pages (no TOML
 	//     config to render); Run registers its own diagnostics pages into
 	//     this map, so it must be non-nil (gateway.go lines 677-751).
-	//   - HTTPServeMux is a private mux instead of http.DefaultServeMux.
+	//   - HTTPServeMux is Params.DebugMux (or a private, unserved mux)
+	//     instead of http.DefaultServeMux; see Params.DebugMux docs.
 	//   - RouteSourceIPv4/IPv6 left nil (no source hint), DataAddr left nil;
 	//     upstream leaves DataAddr unset as well.
 	//   - RpcConfig is the zero env.RPC (all protocols enabled), matching
 	//     upstream defaults when rpc config is absent.
 	gw := &gateway.Gateway{
+		ID:                       "scion-node-agent",
 		TrafficPolicyFile:        p.TrafficPolicyFile,
 		RoutingPolicyFile:        p.RoutingPolicyFile,
 		ControlServerAddr:        ctrlAddr,
@@ -120,7 +142,7 @@ func Run(ctx context.Context, p Params) error {
 		RoutingTableSwapper:      routingTable,
 		ConfigReloadTrigger:      p.ReloadTrigger,
 		HTTPEndpoints:            service.StatusPages{},
-		HTTPServeMux:             http.NewServeMux(),
+		HTTPServeMux:             debugMux,
 		Metrics:                  gateway.NewMetrics(localIA),
 		RpcConfig:                env.RPC{},
 	}

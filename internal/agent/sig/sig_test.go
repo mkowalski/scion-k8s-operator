@@ -1,7 +1,9 @@
 package sig
 
 import (
+	"context"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -31,5 +33,17 @@ func TestAddrsIPv6(t *testing.T) {
 		if !a.IP.Equal(ip) {
 			t.Errorf("%s addr IP = %v, want %v", name, a.IP, ip)
 		}
+	}
+}
+
+func TestRunNilReloadTrigger(t *testing.T) {
+	err := Run(context.Background(), Params{ConfigDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("expected error for nil ReloadTrigger, got nil")
+	}
+	// Note: don't just match "ReloadTrigger" — t.TempDir() embeds the test
+	// name in file paths, so unrelated file-not-found errors would match.
+	if !strings.Contains(err.Error(), "ReloadTrigger must not be nil") {
+		t.Errorf("error %q does not mention nil ReloadTrigger guard", err)
 	}
 }
