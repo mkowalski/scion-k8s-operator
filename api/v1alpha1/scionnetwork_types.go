@@ -27,6 +27,7 @@ type BootstrapSpec struct {
 	// RefreshInterval is how often the bootstrap data is refreshed.
 	// +optional
 	// +kubebuilder:default:="1h"
+	// +kubebuilder:validation:Pattern=`^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$`
 	RefreshInterval string `json:"refreshInterval,omitempty"`
 }
 
@@ -44,10 +45,13 @@ type AdvertisementSpec struct {
 type AcceptPolicySpec struct {
 	// ISDASes lists remote ISD-ASes to exchange prefixes with.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Pattern=`^\d+-([0-9a-fA-F_:]+|\d+)$`
 	ISDASes []string `json:"isdASes"`
 	// ForbiddenCIDRs are never accepted from remotes; the operator always
-	// appends clusterNetwork/serviceNetwork automatically.
+	// appends clusterNetwork/serviceNetwork automatically. IPv4-only is
+	// intentional: the policy engine rejects IPv6 prefixes by design.
 	// +optional
+	// +kubebuilder:validation:items:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$`
 	ForbiddenCIDRs []string `json:"forbiddenCIDRs,omitempty"`
 }
 
@@ -59,6 +63,7 @@ type DataplaneSpec struct {
 }
 
 // RegistrarSpec configures how SIG endpoints are registered with the AS.
+// +kubebuilder:validation:XValidation:rule="self.backend == 'manual' || size(self.endpoint) > 0",message="endpoint required when backend is not manual"
 type RegistrarSpec struct {
 	// Backend selects the registration mechanism.
 	// +kubebuilder:validation:Enum=manual;http;anapaya
@@ -147,7 +152,7 @@ type ScionNetworkStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:validation:XValidation:rule="self.metadata.name == 'cluster'",message="ScionNetwork is a singleton; metadata.name must be 'cluster'"
 // +kubebuilder:printcolumn:name="ISD-AS",type=string,JSONPath=`.status.isdAS`
-// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.nodes.ready`
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.nodes.ready`
 type ScionNetwork struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

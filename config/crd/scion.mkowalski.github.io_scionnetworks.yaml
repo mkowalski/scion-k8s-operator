@@ -20,7 +20,7 @@ spec:
       type: string
     - jsonPath: .status.nodes.ready
       name: Ready
-      type: string
+      type: integer
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -53,14 +53,17 @@ spec:
                   forbiddenCIDRs:
                     description: |-
                       ForbiddenCIDRs are never accepted from remotes; the operator always
-                      appends clusterNetwork/serviceNetwork automatically.
+                      appends clusterNetwork/serviceNetwork automatically. IPv4-only is
+                      intentional: the policy engine rejects IPv6 prefixes by design.
                     items:
+                      pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
                       type: string
                     type: array
                   isdASes:
                     description: ISDASes lists remote ISD-ASes to exchange prefixes
                       with.
                     items:
+                      pattern: ^\d+-([0-9a-fA-F_:]+|\d+)$
                       type: string
                     minItems: 1
                     type: array
@@ -110,6 +113,7 @@ spec:
                     default: 1h
                     description: RefreshInterval is how often the bootstrap data is
                       refreshed.
+                    pattern: ^[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$
                     type: string
                   secretRef:
                     description: |-
@@ -178,6 +182,9 @@ spec:
                       backends.
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: endpoint required when backend is not manual
+                  rule: self.backend == 'manual' || size(self.endpoint) > 0
               tolerations:
                 description: Tolerations are applied to the agent DaemonSet pods.
                 items:

@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"testing"
 
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -47,7 +48,7 @@ func TestScionNetworkDeepCopy(t *testing.T) {
 		},
 	}
 	out := in.DeepCopy()
-	if !equality(in, out) {
+	if !apiequality.Semantic.DeepEqual(in, out) {
 		t.Fatal("DeepCopy result differs from original")
 	}
 	// Mutate the copy; original must be unaffected.
@@ -59,12 +60,4 @@ func TestScionNetworkDeepCopy(t *testing.T) {
 	if *in.Spec.Advertisement.PodCIDR != true {
 		t.Error("DeepCopy shares PodCIDR pointer with original")
 	}
-}
-
-func equality(a, b *ScionNetwork) bool {
-	return a.Name == b.Name &&
-		a.Spec.Bootstrap == b.Spec.Bootstrap &&
-		a.Status.ISDAS == b.Status.ISDAS &&
-		len(a.Spec.AcceptPolicy.ISDASes) == len(b.Spec.AcceptPolicy.ISDASes) &&
-		a.Spec.AcceptPolicy.ISDASes[0] == b.Spec.AcceptPolicy.ISDASes[0]
 }
