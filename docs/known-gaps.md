@@ -18,7 +18,11 @@ this retired:
 - **Live dataplane** (was gap 1): tun creation, `NewStandaloneConnector`,
   SGRP prefix exchange both directions, kernel route programming, and
   bidirectional ICMP pod↔remote through the SIG tunnel all verified live.
-- **Live e2e on OpenShift** (was gap 2): the suite runs green end-to-end.
+- **Live e2e on OpenShift** (was gap 2): the suite completes end-to-end,
+  with one asterisk: the outbound dataplane assertion is a false positive
+  for the SCION path in the test topology (pod egress reached the remote
+  SIG over the underlay, not the tunnel — see new finding 1). All other
+  assertions are genuine.
   SCC/SELinux answer: NET_ADMIN-only nonroot does NOT work on RHCOS — the
   agent now runs privileged as root (TODO markers in `render.go`).
 - **Registrar against a real control service** (was gap 3): operator→

@@ -207,12 +207,15 @@ func SCC() *unstructured.Unstructured {
 		// TODO(live-e2e): privileged required on RHCOS; see DaemonSet.
 		"allowPrivilegeEscalation": true,
 		"allowPrivilegedContainer": true,
-		"allowedCapabilities":      []interface{}{"NET_ADMIN"},
-		"fsGroup":                  map[string]interface{}{"type": "RunAsAny"},
-		"readOnlyRootFilesystem":   false,
-		"runAsUser":                map[string]interface{}{"type": "RunAsAny"},
-		"seLinuxContext":           map[string]interface{}{"type": "RunAsAny"},
-		"supplementalGroups":       map[string]interface{}{"type": "RunAsAny"},
+		// No extra capabilities: they are moot while the container runs
+		// privileged. When the nonroot TODO above lands, NET_ADMIN (tun
+		// creation/route programming) will need to come back here.
+		"allowedCapabilities":    []interface{}{},
+		"fsGroup":                map[string]interface{}{"type": "RunAsAny"},
+		"readOnlyRootFilesystem": false,
+		"runAsUser":              map[string]interface{}{"type": "RunAsAny"},
+		"seLinuxContext":         map[string]interface{}{"type": "RunAsAny"},
+		"supplementalGroups":     map[string]interface{}{"type": "RunAsAny"},
 		"volumes": []interface{}{
 			"hostPath", "secret", "downwardAPI", "configMap", "projected", "emptyDir",
 		},

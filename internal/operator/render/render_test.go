@@ -239,8 +239,8 @@ func TestSCC(t *testing.T) {
 		t.Fatalf("must allow privileged (RHCOS live-e2e requirement): %v", obj)
 	}
 	caps, _ := obj["allowedCapabilities"].([]interface{})
-	if len(caps) != 1 || caps[0] != "NET_ADMIN" {
-		t.Fatalf("allowedCapabilities: %v", obj["allowedCapabilities"])
+	if len(caps) != 0 {
+		t.Fatalf("allowedCapabilities must be empty (moot under privileged): %v", obj["allowedCapabilities"])
 	}
 	users, _ := obj["users"].([]interface{})
 	if len(users) != 1 || users[0] != "system:serviceaccount:scion-system:scion-node-agent" {
