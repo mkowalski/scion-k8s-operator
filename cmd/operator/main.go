@@ -5,16 +5,20 @@ package main
 import (
 	"os"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	v1alpha1 "github.com/mkowalski/scion-k8s-operator/api/v1alpha1"
 	"github.com/mkowalski/scion-k8s-operator/internal/operator/controller"
+	"github.com/mkowalski/scion-k8s-operator/internal/operator/render"
 )
 
 func main() {
@@ -63,6 +67,22 @@ func main() {
 		HealthProbeBindAddress: ":8081",
 		LeaderElection:         true,
 		LeaderElectionID:       "scion-operator-leader",
+		// Secret reads (registrar credentials) go through the cached
+		// client; an unrestricted informer would need cluster-wide secret
+		// list/watch, which the namespaced RBAC Role in config/manifests
+		// deliberately does not grant. Scope the Secret informer to
+		// scion-system instead of using an uncached APIReader so reads stay
+		// cheap and watch-driven. Not covered by envtest (the suite runs as
+		// cluster-admin with an unscoped client, so RBAC denials are not
+		// observable there); verified by gofmt-level compile + manual review
+		// against the manifests' Role.
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {
+					Namespaces: map[string]cache.Config{render.Namespace: {}},
+				},
+			},
+		},
 	})
 	if err != nil {
 		log.Error(err, "create manager")

@@ -69,6 +69,12 @@ spec:
   groups:
     - name: scion
       rules:
+        # Caveat: kube_daemonset_status_number_unavailable comes from the
+        # platform kube-state-metrics. On OpenShift with user-workload
+        # monitoring (UWM), the UWM ruler evaluates rules only against UWM
+        # metrics and may not see platform metrics, so this alert can be
+        # silently inert there. ScionNodeAgentAbsent below is the UWM-safe
+        # fallback based on our own scrape targets.
         - alert: ScionNodeAgentDown
           expr: kube_daemonset_status_number_unavailable{daemonset="scion-node-agent",namespace="scion-system"} > 0
           for: 10m
@@ -76,6 +82,16 @@ spec:
             severity: warning
           annotations:
             summary: "SCION node agent unavailable on {{ $value }} node(s)"
+        # UWM-safe: fires when no scion-node-agent target is scraped at all.
+        # The job label equals the Service name (scion-node-agent-metrics),
+        # the Prometheus Operator default.
+        - alert: ScionNodeAgentAbsent
+          expr: absent(up{job="scion-node-agent-metrics"}) == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No SCION node agent metrics targets are being scraped"
         - alert: ScionNetworkDegraded
           expr: max(scion_operator_scionnetwork_degraded) > 0
           for: 10m
