@@ -31,6 +31,7 @@ package daemonapi
 
 import (
 	"context"
+	"errors"
 	"net"
 	"path/filepath"
 	"time"
@@ -144,15 +145,29 @@ func Run(ctx context.Context, configDir, stateDir, listenAddr string) (err error
 		return serrors.Wrap("initializing trust database", err)
 	}
 	defer trustDB.Close()
+	// The embedded gateway's standalone daemon connector
+	// (pkg/daemon/standalone.go) registers the same
+	// trustengine_db_queries_total counter on the default registry;
+	// MustRegister here would panic with a duplicate-registration error.
+	// Register tolerantly and reuse the existing collector.
+	queriesTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trustengine_db_queries_total",
+			Help: "Total queries to the database",
+		},
+		[]string{"driver", "operation", prom.LabelResult},
+	)
+	if rerr := prometheus.Register(queriesTotal); rerr != nil {
+		already := prometheus.AlreadyRegisteredError{}
+		if errors.As(rerr, &already) {
+			queriesTotal = already.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			return serrors.Wrap("registering trust DB metrics", rerr)
+		}
+	}
 	trustDB = truststoragemetrics.WrapDB(trustDB, truststoragemetrics.Config{
-		Driver: string(storage.BackendSqlite),
-		QueriesTotal: metrics.NewPromCounterFrom(
-			prometheus.CounterOpts{
-				Name: "trustengine_db_queries_total",
-				Help: "Total queries to the database",
-			},
-			[]string{"driver", "operation", prom.LabelResult},
-		),
+		Driver:       string(storage.BackendSqlite),
+		QueriesTotal: metrics.NewPromCounter(queriesTotal),
 	})
 	certsDir := filepath.Join(configDir, "certs")
 	engine, err := daemontrust.NewEngine(
