@@ -78,11 +78,17 @@ type trafficPolicyAS struct {
 	Nets []string `json:"Nets"`
 }
 
-// RenderTrafficPolicy renders the SIG traffic policy JSON mapping each
-// remote IA to the allowed (forbidden-subtracted) prefix set.
+// RenderTrafficPolicy renders the SIG traffic policy JSON declaring each
+// remote IA we exchange prefixes with. Nets is deliberately empty: session
+// prefixes come from SGRP-discovered remote prefixes (filtered by the
+// routing policy accept rules), and scionproto merges static Nets with the
+// dynamic prefixes (gateway/control/sessionconfigurator.go mergePrefixes)
+// and programs a kernel route for every resulting prefix. Rendering the
+// forbidden-subtracted covering set here (as earlier versions did) caused
+// live nodes to install routes for nearly the entire IPv4 space via the
+// tun device, blackholing node egress.
 func RenderTrafficPolicy(in Input) (string, error) {
-	accepted, err := prepare(in)
-	if err != nil {
+	if _, err := prepare(in); err != nil {
 		return "", err
 	}
 	doc := trafficPolicyDoc{
@@ -90,7 +96,7 @@ func RenderTrafficPolicy(in Input) (string, error) {
 		ConfigVersion: 1,
 	}
 	for _, remote := range in.AcceptISDASes {
-		doc.ASes[remote] = trafficPolicyAS{Nets: accepted}
+		doc.ASes[remote] = trafficPolicyAS{Nets: []string{}}
 	}
 	raw, err := json.MarshalIndent(doc, "", "    ")
 	if err != nil {
