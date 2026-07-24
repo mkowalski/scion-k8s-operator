@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -180,6 +182,37 @@ func TestRegistrarDesiredSIGsPublished(t *testing.T) {
 		}
 		return false
 	}, "status.registrar.desiredSIGs missing "+want)
+}
+
+// TestStatusISDASFromDiscoveryURL points spec.bootstrap.discoveryURL at an
+// in-process httptest server (reachable because the reconciler runs in this
+// process) and asserts the discovered isd_as lands in status.isdAS.
+func TestStatusISDASFromDiscoveryURL(t *testing.T) {
+	skipIfNoEnvtest(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/topology" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"isd_as": "1-ff00:0:112", "mtu": 1472}`))
+	}))
+	defer srv.Close()
+
+	sn := newScionNetwork()
+	sn.Spec.Bootstrap.DiscoveryURL = srv.URL
+	if err := k8sClient.Create(ctx, sn); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, sn) })
+
+	eventually(t, func() bool {
+		got := &v1alpha1.ScionNetwork{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: "cluster"}, got); err != nil {
+			return false
+		}
+		return got.Status.ISDAS == "1-ff00:0:112"
+	}, "status.isdAS not set to 1-ff00:0:112")
 }
 
 func TestReconcileRepairsDeletedDaemonSet(t *testing.T) {

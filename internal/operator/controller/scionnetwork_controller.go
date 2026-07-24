@@ -5,8 +5,12 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -51,6 +55,10 @@ type ScionNetworkReconciler struct {
 	// SCCAvail is true when security.openshift.io/v1 was discovered at
 	// startup; the SCC object is only applied then.
 	SCCAvail bool
+
+	// bootstrapHTTP fetches <discoveryURL>/topology for status.isdAS;
+	// lazily initialized (10s timeout) and reused across reconciles.
+	bootstrapHTTP *http.Client
 }
 
 func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -81,6 +89,8 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// retried via RequeueAfter below.
 	regStatus, regFailed := r.syncRegistrar(ctx, sn)
 
+	r.discoverISDAS(ctx, sn)
+
 	available, err := r.updateStatus(ctx, sn, regStatus, regFailed)
 	if err != nil {
 		if apierrors.IsConflict(err) {
@@ -98,6 +108,49 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	return ctrl.Result{}, nil
+}
+
+// discoverISDAS populates status.ISDAS from the bootstrap discovery server
+// (mutating sn only; the caller persists status). Only the "url" bootstrap
+// mode is handled: for dns/dhcp/mdns discovery happens on the nodes, so the
+// operator has no discovery path of its own (future: agent-reported ISD-AS).
+// The value is fetched only while status.ISDAS is empty — a discovered value
+// is kept as-is even if spec.bootstrap later changes, which keeps reconciles
+// cheap; clearing status (or recreating the CR) forces a refetch. Fetch or
+// parse failures leave the previous value untouched and never fail the
+// reconcile: the ISD-AS is informational and the discovery server may be
+// temporarily unreachable while the data plane keeps working.
+func (r *ScionNetworkReconciler) discoverISDAS(ctx context.Context, sn *v1alpha1.ScionNetwork) {
+	if sn.Spec.Bootstrap.Mode != "url" || sn.Status.ISDAS != "" {
+		return
+	}
+	if r.bootstrapHTTP == nil {
+		r.bootstrapHTTP = &http.Client{Timeout: 10 * time.Second}
+	}
+	url := strings.TrimRight(sn.Spec.Bootstrap.DiscoveryURL, "/") + "/topology"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return
+	}
+	resp, err := r.bootstrapHTTP.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return
+	}
+	var topo struct {
+		IA string `json:"isd_as"`
+	}
+	if err := json.Unmarshal(body, &topo); err != nil || topo.IA == "" {
+		return
+	}
+	sn.Status.ISDAS = topo.IA
 }
 
 // markApplyFailed surfaces a persistent apply/config-read failure as a
@@ -269,11 +322,10 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 		client.MatchingLabels{"app": "scion-node-agent"}); err != nil {
 		return false, err
 	}
-	var ready, total int32
+	var ready int32
 	var degraded []string
 	for i := range pods.Items {
 		p := &pods.Items[i]
-		total++
 		if podReady(p) {
 			ready++
 		} else {
@@ -286,10 +338,19 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 	}
 	slices.Sort(degraded)
 
+	// Total comes from the DaemonSet's DesiredNumberScheduled so nodes
+	// that should run an agent but have no pod at all still count against
+	// availability. If the DaemonSet is missing (e.g. just deleted) fall
+	// back to the pod count. Note: status.nodes.degraded only names nodes
+	// whose pod exists but is unready — nodes missing a pod entirely are
+	// reflected in the ready/total gap but not named (the pod list does
+	// not know which nodes they are).
 	dsCurrent := false
+	total := int32(len(pods.Items))
 	ds := &appsv1.DaemonSet{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: render.Namespace, Name: "scion-node-agent"}, ds); err == nil {
 		dsCurrent = ds.Status.ObservedGeneration == ds.Generation
+		total = ds.Status.DesiredNumberScheduled
 	}
 
 	available := total > 0 && ready == total
