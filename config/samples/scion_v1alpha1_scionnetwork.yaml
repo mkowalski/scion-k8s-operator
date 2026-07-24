@@ -1,0 +1,11 @@
+apiVersion: scion.mkowalski.github.io/v1alpha1
+kind: ScionNetwork
+metadata:
+  name: cluster
+spec:
+  bootstrap:
+    mode: url
+    discoveryURL: http://scion-ds.example.org:8041
+  acceptPolicy:
+    isdASes:
+      - 1-ff00:0:110

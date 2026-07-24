@@ -1,0 +1,12 @@
+# OLM bundle input: only bundle-eligible objects (CRD, RBAC, Deployment).
+# Namespace and monitoring objects are not allowed in OLM bundles and ship
+# via the kustomize path (config/manifests) instead.
+# Build with: kustomize build --load-restrictor LoadRestrictionsNone config/olm
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../crd
+  - ../manifests/rbac.yaml
+  - ../manifests/operator.yaml
+  # Sample CR: operator-sdk turns it into the CSV alm-examples annotation.
+  - ../samples/scion_v1alpha1_scionnetwork.yaml

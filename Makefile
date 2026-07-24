@@ -1,7 +1,9 @@
 IMG_REGISTRY ?= quay.io/mkowalski
 VERSION ?= 0.1.0-dev
 
-.PHONY: build test lint images manifests controller-gen envtest
+BUNDLE_VERSION ?= 0.1.0
+
+.PHONY: build test lint images manifests controller-gen envtest operator-sdk bundle
 
 build:
 	CGO_ENABLED=0 go build -o bin/agent ./cmd/agent
@@ -32,3 +34,17 @@ images:
 	podman build -f build/Dockerfile.agent -t $(IMG_REGISTRY)/scion-node-agent:$(VERSION) .
 	podman build -f build/Dockerfile.operator -t $(IMG_REGISTRY)/scion-operator:$(VERSION) .
 	podman build -f build/Dockerfile.registrar -t $(IMG_REGISTRY)/scion-registrar:$(VERSION) .
+
+OPERATOR_SDK_VERSION ?= v1.42.3
+OPERATOR_SDK = $(CURDIR)/bin/operator-sdk
+operator-sdk:
+	test -x $(OPERATOR_SDK) && $(OPERATOR_SDK) version | grep -q '"$(OPERATOR_SDK_VERSION)"' || \
+		{ curl -sL -o $(OPERATOR_SDK) https://github.com/operator-framework/operator-sdk/releases/download/$(OPERATOR_SDK_VERSION)/operator-sdk_$(shell go env GOOS)_$(shell go env GOARCH) && chmod +x $(OPERATOR_SDK); }
+
+# OLM bundle. config/olm holds the bundle-eligible subset (CRD, RBAC,
+# Deployment, sample CR); namespace and monitoring objects ship via the
+# plain kustomize path (config/manifests) because OLM bundles reject them.
+bundle: manifests operator-sdk
+	kustomize build --load-restrictor LoadRestrictionsNone config/olm | \
+		$(OPERATOR_SDK) generate bundle --version $(BUNDLE_VERSION) --kustomize-dir config/manifests --package scion-operator
+	$(OPERATOR_SDK) bundle validate ./bundle
