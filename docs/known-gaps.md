@@ -78,6 +78,12 @@ advertisement off, inbound ping source, printf bugs).
    a nil-pointer panic in `publishingRoutingTable.ClearSession`
    (`gateway/control/publishingroutingtable.go:165`) while agent pods were
    restarting. Upstream defect; affects any SIG peer under churn.
+   **Reported and fixed upstream**: root cause is a teardown-ordering race in
+   `EngineController.run` — see
+   [scionproto/scion#4953](https://github.com/scionproto/scion/issues/4953)
+   and fix PR
+   [scionproto/scion#4954](https://github.com/scionproto/scion/pull/4954).
+   Retire this item once the fix lands in a release we pin.
 4. **Registry/pull-secret assumptions in e2e.** The agent ServiceAccount is
    operator-owned and garbage-collected with the ScionNetwork; per-SA
    `imagePullSecrets` links are lost across undeploy/configure cycles.
@@ -116,8 +122,8 @@ advertisement off, inbound ping source, printf bugs).
    v1alpha1).
 5. **Upstream proposal.** File the TTL/heartbeat dynamic SIG
    self-registration design with scionproto/scion (draft paragraph in
-   `as-registration.md`). Also report the `ClearSession` panic (new
-   finding 3).
+   `as-registration.md`). The `ClearSession` panic (finding 3) is already
+   reported and fixed: scionproto/scion#4953 / #4954.
 6. **Gateway readiness hook upstream.** `gateway.Run` exposes no "data plane
    up" signal; readiness is construction-based (decision D11). An upstream
    callback/channel would make readyz honest.
