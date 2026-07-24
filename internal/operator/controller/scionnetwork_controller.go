@@ -112,17 +112,19 @@ func (r *ScionNetworkReconciler) markApplyFailed(ctx context.Context, sn *v1alph
 	_ = r.Status().Update(ctx, sn)
 }
 
-// apply creates or updates all managed objects. Every object carries an
-// owner reference to the ScionNetwork; a cluster-scoped owner is valid for
-// both cluster-scoped and namespaced dependents.
+// apply creates or updates all managed objects. Every object except the
+// Namespace carries an owner reference to the ScionNetwork; a cluster-scoped
+// owner is valid for both cluster-scoped and namespaced dependents.
 func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNetwork, image string, forbidden []string) error {
-	// Namespace first: the namespaced objects need it. The ScionNetwork
-	// owns scion-system, so deleting the CR garbage-collects the whole
-	// namespace (and everything in it). The owner ref is (re)applied inside
-	// the mutate closure so a stripped ownerRef is repaired on reconcile.
+	// Namespace first: the namespaced objects need it. Deliberately NO
+	// owner reference here: the operator Deployment itself runs in
+	// scion-system (shipped by config/manifests), so garbage-collecting the
+	// namespace on ScionNetwork deletion would delete the operator too.
+	// Namespace lifecycle is owned by the deploy manifests; the controller
+	// only creates it if absent and keeps the PSA labels merged.
 	ns := render.NamespaceObj()
 	wantNSLabels := render.NamespaceObj().Labels
-	if err := r.applyObject(ctx, sn, ns, func() error {
+	if err := r.applyObjectNoOwner(ctx, ns, func() error {
 		if ns.Labels == nil {
 			ns.Labels = map[string]string{}
 		}
@@ -201,6 +203,14 @@ func (r *ScionNetworkReconciler) applyObject(ctx context.Context, sn *v1alpha1.S
 		}
 		return mutate()
 	})
+	return err
+}
+
+// applyObjectNoOwner runs CreateOrUpdate without setting an owner
+// reference. Used for the scion-system Namespace, whose lifecycle is owned
+// by the deploy manifests (the operator itself runs in it).
+func (r *ScionNetworkReconciler) applyObjectNoOwner(ctx context.Context, obj client.Object, mutate func() error) error {
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, mutate)
 	return err
 }
 

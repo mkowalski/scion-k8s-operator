@@ -93,6 +93,13 @@ func TestReconcileCreatesDaemonSet(t *testing.T) {
 	if ns.Labels["pod-security.kubernetes.io/enforce"] != "privileged" {
 		t.Fatalf("namespace PSA labels: %v", ns.Labels)
 	}
+	// The namespace must NOT be owned by the ScionNetwork: the operator
+	// Deployment lives in scion-system, so GC of the namespace on CR
+	// deletion would kill the operator. Lifecycle belongs to the deploy
+	// manifests.
+	if len(ns.OwnerReferences) != 0 {
+		t.Fatalf("namespace must not have owner references: %+v", ns.OwnerReferences)
+	}
 	for _, obj := range []client.Object{
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Namespace: render.Namespace, Name: "scion-node-agent"}},
 		&rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: "scion-node-agent"}},
