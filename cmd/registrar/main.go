@@ -8,6 +8,12 @@
 // topology.NewLoader; private/topology/reload.go re-reads the file on that
 // channel), so the default reload command sends SIGHUP via systemd and
 // causes no control-plane downtime.
+//
+// Security note: the bearer token travels in plaintext HTTP. Deploy the
+// registrar on a trusted or tunneled network (e.g. WireGuard) or behind a
+// TLS-terminating reverse proxy. The registrar typically runs via systemd
+// directly on the AS host; a container image is provided, but the reload
+// command needs access to the host's systemd.
 package main
 
 import (
@@ -64,7 +70,9 @@ func run(log *slog.Logger) error {
 		Token:        token,
 		Log:          log,
 		Reload: func() error {
-			out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput()
+			rctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(rctx, argv[0], argv[1:]...).CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("%s: %w (output: %s)", *reloadCmd, err, out)
 			}
@@ -76,6 +84,10 @@ func run(log *slog.Logger) error {
 		Addr:              *listen,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// WriteTimeout must cover the reload command (up to 30s).
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

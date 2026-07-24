@@ -66,6 +66,10 @@ func PatchSigs(topoFile string, desired map[string]SIG, prefix string) error {
 	}
 	out = append(out, '\n')
 
+	st, err := os.Stat(topoFile)
+	if err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(topoFile), ".topology-*.json")
 	if err != nil {
 		return err
@@ -75,7 +79,8 @@ func PatchSigs(topoFile string, desired map[string]SIG, prefix string) error {
 		tmp.Close()
 		return err
 	}
-	if err := tmp.Chmod(0o644); err != nil {
+	// Mirror the original file's mode rather than hardcoding one.
+	if err := tmp.Chmod(st.Mode().Perm()); err != nil {
 		tmp.Close()
 		return err
 	}

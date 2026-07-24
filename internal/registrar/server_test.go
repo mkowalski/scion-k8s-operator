@@ -2,9 +2,12 @@ package registrar
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -37,7 +40,7 @@ func TestPutSigsReplacesManagedSet(t *testing.T) {
 	s, f, reloads := newTestServer(t, "secret")
 	body := `{"worker-0":{"ctrl_addr":"192.0.2.11:30256","data_addr":"192.0.2.11:30056"}}`
 	rec := doReq(t, s, http.MethodPut, "secret", body)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
 	got := readSigs(t, f)
@@ -90,7 +93,7 @@ func TestMalformedJSON(t *testing.T) {
 func TestGetSigsDerivedFromFile(t *testing.T) {
 	s, _, _ := newTestServer(t, "secret")
 	body := `{"worker-0":{"ctrl_addr":"192.0.2.11:30256","data_addr":"192.0.2.11:30056"}}`
-	if rec := doReq(t, s, http.MethodPut, "secret", body); rec.Code != http.StatusOK {
+	if rec := doReq(t, s, http.MethodPut, "secret", body); rec.Code != http.StatusNoContent {
 		t.Fatalf("put: status %d", rec.Code)
 	}
 	rec := doReq(t, s, http.MethodGet, "secret", "")
@@ -115,5 +118,94 @@ func TestMethodNotAllowed(t *testing.T) {
 	rec := doReq(t, s, http.MethodPost, "secret", `{}`)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status %d, want 405", rec.Code)
+	}
+}
+
+func TestReloadFailure(t *testing.T) {
+	s, f, _ := newTestServer(t, "secret")
+	s.Reload = func() error { return errors.New("boom") }
+	rec := doReq(t, s, http.MethodPut, "secret",
+		`{"worker-0":{"ctrl_addr":"192.0.2.11:30256","data_addr":"192.0.2.11:30056"}}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status %d, want 502", rec.Code)
+	}
+	// topology was patched before the reload failed; that is documented
+	// behavior (operator retries the PUT).
+	got := readSigs(t, f)
+	if _, ok := got["k8s-worker-0"]; !ok {
+		t.Fatalf("topology should be patched even when reload fails: %v", got)
+	}
+}
+
+func TestOversizedBody(t *testing.T) {
+	s, _, reloads := newTestServer(t, "secret")
+	body := `{"pad":{"ctrl_addr":"` + strings.Repeat("x", maxBodyBytes) + `","data_addr":"y"}}`
+	rec := doReq(t, s, http.MethodPut, "secret", body)
+	// MaxBytesReader makes the decoder fail -> our handler returns 400.
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", rec.Code)
+	}
+	if *reloads != 0 {
+		t.Fatalf("reload must not run on oversized body")
+	}
+}
+
+// TestConcurrentPuts checks the handlers are serialized: with N concurrent
+// PUTs of distinct complete sets, the final file must equal exactly one of
+// those sets (last completed PUT wins wholesale), never a mix.
+func TestConcurrentPuts(t *testing.T) {
+	topo := `{"isd_as":"1-ff00:0:112","sigs":{"old-sig":{"ctrl_addr":"192.0.2.1:30256","data_addr":"192.0.2.1:30056"}}}`
+	f := writeTopo(t, topo)
+	s := &Server{
+		TopologyFile: f,
+		Prefix:       "k8s-",
+		Token:        "secret",
+		Reload:       func() error { return nil },
+	}
+	h := s.Handler()
+
+	const n = 16
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			set := map[string]SIG{}
+			for j := 0; j < 4; j++ {
+				set[fmt.Sprintf("set%d-node%d", i, j)] = SIG{
+					CtrlAddr: fmt.Sprintf("192.0.2.%d:3025%d", i, j),
+					DataAddr: fmt.Sprintf("192.0.2.%d:3005%d", i, j),
+				}
+			}
+			body, _ := json.Marshal(set)
+			req := httptest.NewRequest(http.MethodPut, "/v1/sigs", strings.NewReader(string(body)))
+			req.Header.Set("Authorization", "Bearer secret")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Errorf("put %d: status %d", i, rec.Code)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	got, err := ManagedSigs(f, "k8s-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("final set must be one complete set (4 entries), got %d: %v", len(got), got)
+	}
+	winner := ""
+	for name := range got {
+		set := strings.SplitN(name, "-", 2)[0]
+		if winner == "" {
+			winner = set
+		} else if set != winner {
+			t.Fatalf("mixed sets in final file: %v", got)
+		}
+	}
+	if sigs := readSigs(t, f); sigs["old-sig"] == nil {
+		t.Fatalf("unmanaged sig lost: %v", sigs)
 	}
 }

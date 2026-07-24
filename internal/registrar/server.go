@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 )
 
 // maxBodyBytes caps PUT bodies; a full sigs set for a large cluster is
@@ -29,6 +30,12 @@ type Server struct {
 	// (e.g. systemctl kill -s HUP scion-control) lives in cmd/registrar.
 	Reload func() error
 	Log    *slog.Logger
+
+	// mu serializes the sigs handlers: PUT is a read-modify-write of the
+	// topology file, so concurrent PUTs could otherwise interleave and
+	// produce a mixed set (lost update). With the mutex the last
+	// completed PUT wins wholesale.
+	mu sync.Mutex
 }
 
 // Handler returns the HTTP handler for the service.
@@ -52,6 +59,8 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) sigs(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	switch r.Method {
 	case http.MethodGet:
 		s.getSigs(w, r)
@@ -88,10 +97,10 @@ func (s *Server) putSigs(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.Reload(); err != nil {
 		s.logError("reloading control service", err)
-		http.Error(w, "topology updated but reload failed", http.StatusInternalServerError)
+		http.Error(w, "topology updated but reload failed", http.StatusBadGateway)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) logError(msg string, err error) {
