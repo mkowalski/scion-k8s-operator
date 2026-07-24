@@ -35,7 +35,7 @@ dump_diagnostics() {
     agent_pod=$(oc -n "$NAMESPACE" get pods -l app="$AGENT_DS" \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
     if [ -n "$agent_pod" ]; then
-        printf '--- logs %s (last 30 lines) ---\n' "$agent_pod" >&2
+        printf '%s\n' "--- logs $agent_pod (last 30 lines) ---" >&2
         oc -n "$NAMESPACE" logs "$agent_pod" --tail=30 >&2 || true
     fi
 }
