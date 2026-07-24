@@ -1,0 +1,171 @@
+package v1alpha1
+
+import (
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// BootstrapSpec configures how node agents discover the SCION AS.
+// +kubebuilder:validation:XValidation:rule="self.mode != 'url' || size(self.discoveryURL) > 0",message="discoveryURL required when mode is url"
+type BootstrapSpec struct {
+	// Mode selects the bootstrap discovery mechanism.
+	// +kubebuilder:validation:Enum=url;dns;dhcp;mdns
+	Mode string `json:"mode"`
+	// DiscoveryURL is the bootstrap server URL; required when mode is url.
+	// +optional
+	DiscoveryURL string `json:"discoveryURL,omitempty"`
+	// DNSDomain is the search domain used for DNS-based discovery.
+	// +optional
+	DNSDomain string `json:"dnsDomain,omitempty"`
+	// DHCPInterface is the network interface used for DHCP-based discovery.
+	// +optional
+	DHCPInterface string `json:"dhcpInterface,omitempty"`
+	// SecretRef optionally holds credentials for authenticated bootstrap
+	// (Anapaya) and/or pinned TRCs under key "pinned-trcs".
+	// +optional
+	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
+	// RefreshInterval is how often the bootstrap data is refreshed.
+	// +optional
+	// +kubebuilder:default:="1h"
+	RefreshInterval string `json:"refreshInterval,omitempty"`
+}
+
+// AdvertisementSpec controls which local prefixes are advertised to remotes.
+type AdvertisementSpec struct {
+	// PodCIDR enables advertising each node's pod CIDR.
+	// +kubebuilder:default:=true
+	PodCIDR *bool `json:"podCIDR,omitempty"`
+	// NodeIP enables advertising each node's IP address.
+	// +kubebuilder:default:=true
+	NodeIP *bool `json:"nodeIP,omitempty"`
+}
+
+// AcceptPolicySpec controls which remote prefixes are accepted.
+type AcceptPolicySpec struct {
+	// ISDASes lists remote ISD-ASes to exchange prefixes with.
+	// +kubebuilder:validation:MinItems=1
+	ISDASes []string `json:"isdASes"`
+	// ForbiddenCIDRs are never accepted from remotes; the operator always
+	// appends clusterNetwork/serviceNetwork automatically.
+	// +optional
+	ForbiddenCIDRs []string `json:"forbiddenCIDRs,omitempty"`
+}
+
+// DataplaneSpec configures the node-local SCION dataplane.
+type DataplaneSpec struct {
+	// TunName is the name of the TUN device created on each node.
+	// +kubebuilder:default:="scion0"
+	TunName string `json:"tunName,omitempty"`
+}
+
+// RegistrarSpec configures how SIG endpoints are registered with the AS.
+type RegistrarSpec struct {
+	// Backend selects the registration mechanism.
+	// +kubebuilder:validation:Enum=manual;http;anapaya
+	// +kubebuilder:default:="manual"
+	Backend string `json:"backend,omitempty"`
+	// Endpoint is the registration API endpoint for http/anapaya backends.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+	// CredentialsSecretRef holds credentials for the registration backend.
+	// +optional
+	CredentialsSecretRef *corev1.LocalObjectReference `json:"credentialsSecretRef,omitempty"`
+}
+
+// ScionNetworkSpec defines the desired state of ScionNetwork.
+type ScionNetworkSpec struct {
+	// Bootstrap configures SCION AS discovery for node agents.
+	Bootstrap BootstrapSpec `json:"bootstrap"`
+	// Advertisement controls which local prefixes are advertised.
+	// +optional
+	Advertisement AdvertisementSpec `json:"advertisement,omitempty"`
+	// AcceptPolicy controls which remote prefixes are accepted.
+	AcceptPolicy AcceptPolicySpec `json:"acceptPolicy"`
+	// Dataplane configures the node-local SCION dataplane.
+	// +optional
+	Dataplane DataplaneSpec `json:"dataplane,omitempty"`
+	// Registrar configures SIG endpoint registration.
+	// +optional
+	Registrar RegistrarSpec `json:"registrar,omitempty"`
+	// NodeSelector limits which nodes run the agent DaemonSet.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Tolerations are applied to the agent DaemonSet pods.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+	// AgentImage overrides the default agent image (set by operator build).
+	// +optional
+	AgentImage string `json:"agentImage,omitempty"`
+}
+
+// NodeSummary summarizes agent readiness across nodes.
+type NodeSummary struct {
+	// Ready is the number of nodes with a ready agent.
+	Ready int32 `json:"ready"`
+	// Total is the number of nodes that should run an agent.
+	Total int32 `json:"total"`
+	// Degraded lists nodes whose agent is not ready.
+	// +optional
+	Degraded []string `json:"degraded,omitempty"`
+}
+
+// RegistrarStatus reports the state of SIG endpoint registration.
+type RegistrarStatus struct {
+	// RegisteredNodes is the number of nodes successfully registered.
+	// +optional
+	RegisteredNodes int32 `json:"registeredNodes,omitempty"`
+	// DesiredSIGs is published for backend=manual so AS operators can copy it.
+	// +optional
+	DesiredSIGs []string `json:"desiredSIGs,omitempty"`
+	// LastSyncTime is the last time registration was synced.
+	// +optional
+	LastSyncTime *metav1.Time `json:"lastSyncTime,omitempty"`
+	// LastError is the most recent registration error, if any.
+	// +optional
+	LastError string `json:"lastError,omitempty"`
+}
+
+// ScionNetworkStatus defines the observed state of ScionNetwork.
+type ScionNetworkStatus struct {
+	// Conditions represent the current state of the ScionNetwork.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// ISDAS is the local ISD-AS discovered via bootstrap.
+	// +optional
+	ISDAS string `json:"isdAS,omitempty"`
+	// Nodes summarizes agent readiness across nodes.
+	// +optional
+	Nodes NodeSummary `json:"nodes,omitempty"`
+	// Registrar reports SIG registration state.
+	// +optional
+	Registrar RegistrarStatus `json:"registrar,omitempty"`
+}
+
+// ScionNetwork is the cluster-scoped singleton configuring SCION connectivity.
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:subresource:status
+// +kubebuilder:validation:XValidation:rule="self.metadata.name == 'cluster'",message="ScionNetwork is a singleton; metadata.name must be 'cluster'"
+// +kubebuilder:printcolumn:name="ISD-AS",type=string,JSONPath=`.status.isdAS`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.nodes.ready`
+type ScionNetwork struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// Spec defines the desired state.
+	Spec ScionNetworkSpec `json:"spec,omitempty"`
+	// Status is the observed state.
+	Status ScionNetworkStatus `json:"status,omitempty"`
+}
+
+// ScionNetworkList contains a list of ScionNetwork.
+// +kubebuilder:object:root=true
+type ScionNetworkList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ScionNetwork `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(&ScionNetwork{}, &ScionNetworkList{})
+}
