@@ -113,3 +113,17 @@ func TestNodeInfoLocalPrefixesMissingIP(t *testing.T) {
 		t.Error("expected error when SCION_NODE_IP is unset")
 	}
 }
+
+// TestCloseOnceDoubleCall guards the OnUp readiness path: even if the
+// gateway ever fires OnUp more than once, the sigUp close must not panic.
+func TestCloseOnceDoubleCall(t *testing.T) {
+	ch := make(chan struct{})
+	f := closeOnce(ch)
+	f()
+	f() // must not panic
+	select {
+	case <-ch:
+	default:
+		t.Fatal("channel not closed")
+	}
+}

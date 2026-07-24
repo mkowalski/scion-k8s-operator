@@ -27,7 +27,7 @@ skip() { printf 'SKIP %s: %s\n' "$1" "$2"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 dump_diagnostics() {
-    printf '--- diagnostics (best-effort) ---\n' >&2
+    printf '%s\n' '--- diagnostics (best-effort) ---' >&2
     oc -n "$NAMESPACE" get pods -o wide >&2 || true
     oc get scionnetwork cluster -o yaml 2>/dev/null | tail -40 >&2 || true
     oc -n "$NAMESPACE" get events --sort-by=.lastTimestamp 2>/dev/null | tail -20 >&2 || true
@@ -35,7 +35,7 @@ dump_diagnostics() {
     agent_pod=$(oc -n "$NAMESPACE" get pods -l app="$AGENT_DS" \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
     if [ -n "$agent_pod" ]; then
-        printf '--- logs %s (last 30 lines) ---\n' "$agent_pod" >&2
+        printf '%s\n' "--- logs $agent_pod (last 30 lines) ---" >&2
         oc -n "$NAMESPACE" logs "$agent_pod" --tail=30 >&2 || true
     fi
 }
@@ -157,6 +157,14 @@ spec:
   acceptPolicy:
     isdASes:
       - "$REMOTE_ISD_AS"
+  # Node IPs share the NIC that carries the SCION underlay in this test
+  # topology. Advertising them makes the remote side route all traffic to
+  # the nodes -- including the SCION underlay itself -- through the SIG
+  # tunnel, creating a routing loop that blackholes probe replies and
+  # control-plane discovery. Advertise pod CIDRs only.
+  advertisement:
+    podCIDR: true
+    nodeIP: false
   registrar:
     backend: http
     endpoint: "$REGISTRAR_URL"
@@ -195,7 +203,10 @@ assert_dataplane() {
         local pod_ip
         pod_ip=$(oc -n "$NAMESPACE" get pod "$TEST_POD" -o jsonpath='{.status.podIP}')
         log "inbound: ping $pod_ip from $REMOTE_SSH"
-        ssh "$REMOTE_SSH" ping -c 3 -W 5 "$pod_ip"
+        # Source from the remote SIG-side address: the remote host is
+        # multihomed and default source selection picks a non-SCION
+        # interface, so replies would never route back through the SIG.
+        ssh "$REMOTE_SSH" ping -c 3 -W 5 -I "$REMOTE_PING_IP" "$pod_ip"
     else
         skip "assert_dataplane(inbound)" "REMOTE_SSH not set; inbound path not verified"
     fi

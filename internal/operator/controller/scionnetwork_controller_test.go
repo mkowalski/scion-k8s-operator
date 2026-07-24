@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,29 @@ func dsKey() types.NamespacedName {
 	return types.NamespacedName{Namespace: render.Namespace, Name: "scion-node-agent"}
 }
 
+// deleteAndWait deletes the ScionNetwork and blocks until it is actually
+// gone. Deletion is asynchronous since the registrar-cleanup finalizer was
+// added: Delete only sets deletionTimestamp and the running reconciler
+// removes the finalizer afterwards. Every envtest test creating the
+// "cluster" singleton must use this in t.Cleanup, or the next test's
+// Create fails with "object is being deleted".
+func deleteAndWait(t *testing.T, sn *v1alpha1.ScionNetwork) {
+	t.Helper()
+	if err := k8sClient.Delete(ctx, sn); err != nil && !apierrors.IsNotFound(err) {
+		t.Errorf("delete ScionNetwork: %v", err)
+		return
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: sn.Name}, &v1alpha1.ScionNetwork{})
+		if apierrors.IsNotFound(err) {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Errorf("ScionNetwork %q still present after delete (finalizer stuck?)", sn.Name)
+}
+
 func TestReconcileCreatesDaemonSet(t *testing.T) {
 	skipIfNoEnvtest(t)
 
@@ -60,7 +84,7 @@ func TestReconcileCreatesDaemonSet(t *testing.T) {
 	if err := k8sClient.Create(ctx, sn); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(ctx, sn) })
+	t.Cleanup(func() { deleteAndWait(t, sn) })
 
 	ds := &appsv1.DaemonSet{}
 	eventually(t, func() bool {
@@ -165,7 +189,7 @@ func TestRegistrarDesiredSIGsPublished(t *testing.T) {
 	if err := k8sClient.Create(ctx, sn); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(ctx, sn) })
+	t.Cleanup(func() { deleteAndWait(t, sn) })
 
 	want := "node1=192.0.2.10:30256,192.0.2.10:30056"
 	eventually(t, func() bool {
@@ -204,7 +228,7 @@ func TestStatusISDASFromDiscoveryURL(t *testing.T) {
 	if err := k8sClient.Create(ctx, sn); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(ctx, sn) })
+	t.Cleanup(func() { deleteAndWait(t, sn) })
 
 	eventually(t, func() bool {
 		got := &v1alpha1.ScionNetwork{}
@@ -222,7 +246,7 @@ func TestReconcileRepairsDeletedDaemonSet(t *testing.T) {
 	if err := k8sClient.Create(ctx, sn); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(ctx, sn) })
+	t.Cleanup(func() { deleteAndWait(t, sn) })
 
 	ds := &appsv1.DaemonSet{}
 	eventually(t, func() bool {
@@ -283,5 +307,144 @@ func TestApplyFailureSurfacesDegraded(t *testing.T) {
 	}
 	if !strings.Contains(cond.Message, "injected daemonset failure") {
 		t.Fatalf("Degraded message = %q, want to contain the error", cond.Message)
+	}
+}
+
+// TestFinalizerLifecycle checks (with the fake client) that reconcile adds
+// the registrar-cleanup finalizer, and that deletion deregisters the SIG
+// set (manual backend: no-op) and removes the finalizer so the object can
+// go away.
+func TestFinalizerLifecycle(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	sn := newScionNetwork()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sn).
+		WithStatusSubresource(&v1alpha1.ScionNetwork{}).
+		Build()
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme, AgentImage: testAgentImage}
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
+
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	got := &v1alpha1.ScionNetwork{}
+	if err := c.Get(context.Background(), req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.Finalizers, registrarFinalizer) {
+		t.Fatalf("finalizer not added: %v", got.Finalizers)
+	}
+
+	if err := c.Delete(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	// With the finalizer removed the fake client deletes the object.
+	err := c.Get(context.Background(), req.NamespacedName, &v1alpha1.ScionNetwork{})
+	if err == nil || !apierrors.IsNotFound(err) {
+		t.Fatalf("object still present after finalization: %v", err)
+	}
+}
+
+// newDeletingScionNetwork builds a ScionNetwork already marked for
+// deletion (finalizer + deletionTimestamp preset for the fake client, which
+// permits deletionTimestamp only alongside finalizers). age shifts the
+// deletionTimestamp into the past to exercise the deregistration deadline.
+func newDeletingScionNetwork(age time.Duration) *v1alpha1.ScionNetwork {
+	sn := newScionNetwork()
+	sn.Finalizers = []string{registrarFinalizer}
+	ts := metav1.NewTime(time.Now().Add(-age))
+	sn.DeletionTimestamp = &ts
+	return sn
+}
+
+func newFakeClient(t *testing.T, objs ...client.Object) (client.Client, *runtime.Scheme) {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithStatusSubresource(&v1alpha1.ScionNetwork{}).
+		Build()
+	return c, scheme
+}
+
+// TestFinalizeAnapayaReleasesImmediately: the anapaya backend is an
+// unimplemented stub (Ensure always returns ErrNotImplemented); nothing was
+// ever registered, so deletion must release the finalizer on the first
+// reconcile instead of wedging forever.
+func TestFinalizeAnapayaReleasesImmediately(t *testing.T) {
+	sn := newDeletingScionNetwork(0)
+	sn.Spec.Registrar.Backend = "anapaya"
+	c, scheme := newFakeClient(t, sn)
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme, AgentImage: testAgentImage}
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
+
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	err := c.Get(context.Background(), req.NamespacedName, &v1alpha1.ScionNetwork{})
+	if err == nil || !apierrors.IsNotFound(err) {
+		t.Fatalf("object still present after anapaya finalization: %v", err)
+	}
+}
+
+// TestFinalizeHTTPFailureRetriesThenReleases: a reachable but erroring HTTP
+// registrar must keep the finalizer (retry via error/backoff) while within
+// the deregistration deadline, and release it once the deletionTimestamp is
+// older than the deadline.
+func TestFinalizeHTTPFailureRetriesThenReleases(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
+
+	// Fresh deletion: still within the deadline, must retry (error) and
+	// keep the finalizer.
+	fresh := newDeletingScionNetwork(0)
+	fresh.Spec.Registrar.Backend = "http"
+	fresh.Spec.Registrar.Endpoint = srv.URL
+	c, scheme := newFakeClient(t, fresh)
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme, AgentImage: testAgentImage}
+	if _, err := r.Reconcile(context.Background(), req); err == nil ||
+		!strings.Contains(err.Error(), "deregister SIGs") {
+		t.Fatalf("Reconcile error = %v, want deregister failure", err)
+	}
+	got := &v1alpha1.ScionNetwork{}
+	if err := c.Get(context.Background(), req.NamespacedName, got); err != nil {
+		t.Fatalf("object gone before deadline: %v", err)
+	}
+	if !slices.Contains(got.Finalizers, registrarFinalizer) {
+		t.Fatalf("finalizer dropped before deadline: %v", got.Finalizers)
+	}
+
+	// Deletion older than the deadline: give up loudly and release.
+	old := newDeletingScionNetwork(deregistrationDeadline + time.Minute)
+	old.Spec.Registrar.Backend = "http"
+	old.Spec.Registrar.Endpoint = srv.URL
+	c, scheme = newFakeClient(t, old)
+	r = &ScionNetworkReconciler{Client: c, Scheme: scheme, AgentImage: testAgentImage}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("Reconcile past deadline: %v", err)
+	}
+	err := c.Get(context.Background(), req.NamespacedName, &v1alpha1.ScionNetwork{})
+	if err == nil || !apierrors.IsNotFound(err) {
+		t.Fatalf("object still present past deadline: %v", err)
 	}
 }

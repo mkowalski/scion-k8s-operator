@@ -68,7 +68,14 @@ func probe(path string) *corev1.Probe {
 func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string) *appsv1.DaemonSet {
 	hostPathChar := corev1.HostPathCharDev
 	hostPathDir := corev1.HostPathDirectoryOrCreate
-	priv := false
+	// TODO(live-e2e): NET_ADMIN-only is insufficient on RHCOS: the
+	// distroless nonroot uid cannot write the root-owned hostPath state
+	// dir and SELinux (container_t) denies hostPath writes and tun
+	// manipulation. Run privileged (as root) like other host-network
+	// dataplane DaemonSets (e.g. OVN-K) until a scoped SELinux policy +
+	// chown-ed state dir approach is implemented.
+	priv := true
+	rootUID := int64(0)
 	// Intentionally unset (agent defaults are correct as-is):
 	// SCION_STATE_DIR (/var/lib/scion-node-agent), SCION_METRICS_ADDR
 	// (:9465), SCION_ENABLE_DAEMON_API (true).
@@ -125,9 +132,7 @@ func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string)
 						Env:   env,
 						SecurityContext: &corev1.SecurityContext{
 							Privileged: &priv,
-							Capabilities: &corev1.Capabilities{
-								Add: []corev1.Capability{"NET_ADMIN"},
-							},
+							RunAsUser:  &rootUID,
 						},
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
@@ -199,14 +204,18 @@ func SCC() *unstructured.Unstructured {
 		"allowHostNetwork":         true,
 		"allowHostPID":             false,
 		"allowHostPorts":           true,
-		"allowPrivilegeEscalation": false,
-		"allowPrivilegedContainer": false,
-		"allowedCapabilities":      []interface{}{"NET_ADMIN"},
-		"fsGroup":                  map[string]interface{}{"type": "RunAsAny"},
-		"readOnlyRootFilesystem":   false,
-		"runAsUser":                map[string]interface{}{"type": "RunAsAny"},
-		"seLinuxContext":           map[string]interface{}{"type": "RunAsAny"},
-		"supplementalGroups":       map[string]interface{}{"type": "RunAsAny"},
+		// TODO(live-e2e): privileged required on RHCOS; see DaemonSet.
+		"allowPrivilegeEscalation": true,
+		"allowPrivilegedContainer": true,
+		// No extra capabilities: they are moot while the container runs
+		// privileged. When the nonroot TODO above lands, NET_ADMIN (tun
+		// creation/route programming) will need to come back here.
+		"allowedCapabilities":    []interface{}{},
+		"fsGroup":                map[string]interface{}{"type": "RunAsAny"},
+		"readOnlyRootFilesystem": false,
+		"runAsUser":              map[string]interface{}{"type": "RunAsAny"},
+		"seLinuxContext":         map[string]interface{}{"type": "RunAsAny"},
+		"supplementalGroups":     map[string]interface{}{"type": "RunAsAny"},
 		"volumes": []interface{}{
 			"hostPath", "secret", "downwardAPI", "configMap", "projected", "emptyDir",
 		},

@@ -116,19 +116,14 @@ func TestTrafficPolicyShape(t *testing.T) {
 		t.Error("ConfigVersion must be non-zero")
 	}
 	for ia, e := range doc.ASes {
-		if len(e.Nets) == 0 {
-			t.Errorf("no Nets for %s", ia)
+		// Nets must be present but empty: session prefixes come from
+		// SGRP discovery filtered by the routing policy; static Nets
+		// would be programmed as kernel routes (see RenderTrafficPolicy).
+		if e.Nets == nil {
+			t.Errorf("Nets missing for %s", ia)
 		}
-		for _, n := range e.Nets {
-			p := netip.MustParsePrefix(n)
-			if p.Bits() == 0 {
-				t.Errorf("default route in Nets for %s", ia)
-			}
-			for _, f := range testInput().ForbiddenCIDRs {
-				if p.Overlaps(netip.MustParsePrefix(f)) {
-					t.Errorf("net %s overlaps forbidden %s", n, f)
-				}
-			}
+		if len(e.Nets) != 0 {
+			t.Errorf("Nets must be empty for %s, got %v", ia, e.Nets)
 		}
 	}
 }

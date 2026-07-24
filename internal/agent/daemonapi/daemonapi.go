@@ -31,6 +31,7 @@ package daemonapi
 
 import (
 	"context"
+	"errors"
 	"net"
 	"path/filepath"
 	"time"
@@ -144,15 +145,24 @@ func Run(ctx context.Context, configDir, stateDir, listenAddr string) (err error
 		return serrors.Wrap("initializing trust database", err)
 	}
 	defer trustDB.Close()
+	// The embedded gateway's standalone daemon connector
+	// (pkg/daemon/standalone.go) registers the same
+	// trustengine_db_queries_total counter on the default registry;
+	// MustRegister here would panic with a duplicate-registration error.
+	// Register tolerantly and reuse the existing collector.
+	queriesTotal, rerr := registerOrReuse(prometheus.DefaultRegisterer, prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "trustengine_db_queries_total",
+			Help: "Total queries to the database",
+		},
+		[]string{"driver", "operation", prom.LabelResult},
+	))
+	if rerr != nil {
+		return serrors.Wrap("registering trust DB metrics", rerr)
+	}
 	trustDB = truststoragemetrics.WrapDB(trustDB, truststoragemetrics.Config{
-		Driver: string(storage.BackendSqlite),
-		QueriesTotal: metrics.NewPromCounterFrom(
-			prometheus.CounterOpts{
-				Name: "trustengine_db_queries_total",
-				Help: "Total queries to the database",
-			},
-			[]string{"driver", "operation", prom.LabelResult},
-		),
+		Driver:       string(storage.BackendSqlite),
+		QueriesTotal: metrics.NewPromCounter(queriesTotal),
 	})
 	certsDir := filepath.Join(configDir, "certs")
 	engine, err := daemontrust.NewEngine(
@@ -264,6 +274,23 @@ func Run(ctx context.Context, configDir, stateDir, listenAddr string) (err error
 	})
 
 	return g.Wait()
+}
+
+// registerOrReuse registers c on reg; if an equivalent collector is
+// already registered (prometheus.AlreadyRegisteredError), the existing
+// collector is returned instead. Any other registration error is returned
+// as-is. This makes duplicate registration against the process-global
+// default registry tolerable when scionproto components register the same
+// metric (e.g. the standalone daemon connector vs this daemon API).
+func registerOrReuse[C prometheus.Collector](reg prometheus.Registerer, c C) (C, error) {
+	if err := reg.Register(c); err != nil {
+		already := prometheus.AlreadyRegisteredError{}
+		if errors.As(err, &already) {
+			return already.ExistingCollector.(C), nil
+		}
+		return c, err
+	}
+	return c, nil
 }
 
 // loaderMetrics is ported verbatim from upstream main.go.

@@ -2,9 +2,13 @@ package sig
 
 import (
 	"context"
+	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAddrs(t *testing.T) {
@@ -73,4 +77,40 @@ func TestRunNilOnUpTolerated(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing topology.json")
 	}
+}
+
+func TestEnableTunForwarding(t *testing.T) {
+	t.Run("success once file appears", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "forwarding")
+		if err := os.WriteFile(path, []byte("0"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := enableTunForwarding(context.Background(), path, 3, time.Millisecond); err != nil {
+			t.Fatalf("enableTunForwarding: %v", err)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != "1" {
+			t.Fatalf("forwarding = %q, want 1", b)
+		}
+	})
+
+	t.Run("exhausts attempts on missing device", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "no-such-dir", "forwarding")
+		err := enableTunForwarding(context.Background(), path, 2, time.Millisecond)
+		if err == nil {
+			t.Fatal("want error after exhausting attempts")
+		}
+	})
+
+	t.Run("returns on context cancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := enableTunForwarding(ctx, "/nonexistent", 1000, time.Hour)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	})
 }

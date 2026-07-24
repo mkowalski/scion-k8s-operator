@@ -116,11 +116,12 @@ func TestDaemonSetProbesAndSecurity(t *testing.T) {
 		t.Fatalf("liveness probe: %+v", c.LivenessProbe)
 	}
 	sc := c.SecurityContext
-	if sc == nil || sc.Privileged == nil || *sc.Privileged {
-		t.Fatalf("must not be privileged: %+v", sc)
+	// TODO(live-e2e): privileged root is required on RHCOS; see render.go.
+	if sc == nil || sc.Privileged == nil || !*sc.Privileged {
+		t.Fatalf("must be privileged (RHCOS live-e2e requirement): %+v", sc)
 	}
-	if sc.Capabilities == nil || len(sc.Capabilities.Add) != 1 || sc.Capabilities.Add[0] != "NET_ADMIN" {
-		t.Fatalf("capabilities: %+v", sc.Capabilities)
+	if sc.RunAsUser == nil || *sc.RunAsUser != 0 {
+		t.Fatalf("must run as root: %+v", sc)
 	}
 	if c.Resources.Requests.Cpu().String() != "50m" || c.Resources.Requests.Memory().String() != "64Mi" {
 		t.Fatalf("resource requests: %+v", c.Resources)
@@ -234,12 +235,12 @@ func TestSCC(t *testing.T) {
 	if obj["allowHostNetwork"] != true || obj["allowHostDirVolumePlugin"] != true {
 		t.Fatalf("host flags: %v", obj)
 	}
-	if obj["allowPrivilegedContainer"] != false {
-		t.Fatalf("must not allow privileged: %v", obj)
+	if obj["allowPrivilegedContainer"] != true {
+		t.Fatalf("must allow privileged (RHCOS live-e2e requirement): %v", obj)
 	}
 	caps, _ := obj["allowedCapabilities"].([]interface{})
-	if len(caps) != 1 || caps[0] != "NET_ADMIN" {
-		t.Fatalf("allowedCapabilities: %v", obj["allowedCapabilities"])
+	if len(caps) != 0 {
+		t.Fatalf("allowedCapabilities must be empty (moot under privileged): %v", obj["allowedCapabilities"])
 	}
 	users, _ := obj["users"].([]interface{})
 	if len(users) != 1 || users[0] != "system:serviceaccount:scion-system:scion-node-agent" {

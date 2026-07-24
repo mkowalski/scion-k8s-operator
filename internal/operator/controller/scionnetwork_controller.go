@@ -6,6 +6,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	v1alpha1 "github.com/mkowalski/scion-k8s-operator/api/v1alpha1"
+	"github.com/mkowalski/scion-k8s-operator/internal/operator/registrar"
 	"github.com/mkowalski/scion-k8s-operator/internal/operator/render"
 )
 
@@ -61,11 +63,25 @@ type ScionNetworkReconciler struct {
 	bootstrapHTTP *http.Client
 }
 
+// registrarFinalizer guards ScionNetwork deletion until the node SIG set
+// has been deregistered from the AS-side registrar.
+const registrarFinalizer = "scion.mkowalski.github.io/registrar-cleanup"
+
 func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	sn := &v1alpha1.ScionNetwork{}
 	if err := r.Get(ctx, req.NamespacedName, sn); err != nil {
 		// Not-found: dependents are garbage-collected via owner refs.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if !sn.DeletionTimestamp.IsZero() {
+		return r.finalize(ctx, sn)
+	}
+	if !controllerutil.ContainsFinalizer(sn, registrarFinalizer) {
+		controllerutil.AddFinalizer(sn, registrarFinalizer)
+		if err := r.Update(ctx, sn); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	forbidden, err := r.clusterForbiddenCIDRs(ctx, sn)
@@ -106,6 +122,62 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// owned by the DaemonSet, not the ScionNetwork), so poll until
 		// fully available.
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// deregistrationDeadline bounds how long a persistently failing registrar
+// Ensure may block ScionNetwork deletion, measured from the object's
+// deletionTimestamp. See finalize for the escape-hatch rationale (also
+// documented in docs/known-gaps.md).
+const deregistrationDeadline = 10 * time.Minute
+
+// finalize deregisters all node SIGs from the AS-side registrar (an Ensure
+// with an empty set) and then removes the finalizer. Blocking deletion
+// forever on a broken registrar is worse than leaving stale entries, which
+// the AS side can garbage collect, so the finalizer is dropped anyway when:
+//
+//   - backend construction fails (e.g. the credentials Secret was already
+//     deleted);
+//   - the backend is an unimplemented stub (ErrNotImplemented, e.g.
+//     anapaya) — a stub never registered anything, so there is nothing to
+//     deregister;
+//   - Ensure keeps failing past deregistrationDeadline after the
+//     deletionTimestamp — logged loudly; until then failures are retried
+//     with the controller's backoff.
+//
+// Manual escape hatch (documented in docs/known-gaps.md): remove the
+// finalizer by hand, e.g.
+// kubectl patch scionnetwork cluster --type=merge -p '{"metadata":{"finalizers":null}}'.
+func (r *ScionNetworkReconciler) finalize(ctx context.Context, sn *v1alpha1.ScionNetwork) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(sn, registrarFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	log := ctrl.LoggerFrom(ctx)
+	backend, err := r.backendFor(ctx, sn)
+	if err != nil {
+		log.Error(err,
+			"registrar backend unavailable during finalization; skipping deregistration")
+	} else {
+		ectx, cancel := context.WithTimeout(ctx, registrarTimeout)
+		defer cancel()
+		switch err := backend.Ensure(ectx, nil); {
+		case err == nil:
+		case errors.Is(err, registrar.ErrNotImplemented):
+			log.Info("registrar backend is an unimplemented stub; nothing was ever registered, skipping deregistration",
+				"backend", sn.Spec.Registrar.Backend)
+		case time.Since(sn.DeletionTimestamp.Time) > deregistrationDeadline:
+			log.Error(err,
+				"SIG deregistration still failing past the deletion deadline; releasing the finalizer WITHOUT deregistering — stale SIG entries may remain on the AS side",
+				"deadline", deregistrationDeadline.String(),
+				"deletionTimestamp", sn.DeletionTimestamp.String())
+		default:
+			return ctrl.Result{}, fmt.Errorf("deregister SIGs: %w", err)
+		}
+	}
+	controllerutil.RemoveFinalizer(sn, registrarFinalizer)
+	if err := r.Update(ctx, sn); err != nil {
+		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
 }

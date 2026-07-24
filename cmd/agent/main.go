@@ -15,12 +15,15 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+
+	scionlog "github.com/scionproto/scion/pkg/log"
 
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/bootstrap"
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/config"
@@ -38,6 +41,13 @@ const daemonAPIAddr = "127.0.0.1:30255"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Initialize the scionproto logger; without this the embedded
+	// gateway/daemon libraries log nothing, hiding control-plane errors
+	// (e.g. remote gateway discovery failures).
+	if err := scionlog.Setup(scionlog.Config{Console: scionlog.ConsoleConfig{Level: "info"}}); err != nil {
+		log.Error("scion log setup failed", "err", err)
+		os.Exit(1)
+	}
 	if err := run(log); err != nil {
 		log.Error("agent failed", "err", err)
 		os.Exit(1)
@@ -131,6 +141,15 @@ func run(log *slog.Logger) error {
 		}
 	})
 
+	// sigUp is closed once the gateway's standalone daemon connector is
+	// constructed. The connector (scionproto pkg/daemon/standalone.go)
+	// MustRegisters metrics that daemonapi.Run also registers; daemonapi
+	// registers tolerantly, so it must go second — gate it on the gateway.
+	// TODO: this start-ordering gate is a workaround for scionproto's
+	// MustRegister on the global default registry; if upstream ever takes
+	// an injectable registry, the gate (and sigUp) can go away.
+	sigUp := make(chan struct{})
+	sigUpOnce := closeOnce(sigUp)
 	g.Go(func() error {
 		log.Info("starting gateway", "tun", cfg.TunName)
 		defer h.SetReady(health.ComponentGateway, false)
@@ -144,12 +163,20 @@ func run(log *slog.Logger) error {
 			DebugMux:          mux,
 			// Readiness flips only once the gateway is constructed (see
 			// sig.Params.OnUp for the remaining optimism caveat).
-			OnUp: func() { h.SetReady(health.ComponentGateway, true) },
+			OnUp: func() {
+				h.SetReady(health.ComponentGateway, true)
+				sigUpOnce()
+			},
 		})
 	})
 
 	if cfg.EnableDaemonAPI {
 		g.Go(func() error {
+			select {
+			case <-sigUp:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			log.Info("starting daemon API", "addr", daemonAPIAddr)
 			return daemonapi.Run(ctx, confDir, cfg.StateDir, daemonAPIAddr)
 		})
@@ -275,4 +302,13 @@ func renderPolicies(in policy.Input, trafficFile, routingFile string) error {
 		return err
 	}
 	return os.WriteFile(routingFile, []byte(routing), 0o644)
+}
+
+// closeOnce returns a function that closes ch exactly once; further calls
+// are no-ops. The gateway's OnUp is documented to fire once, but readiness
+// callbacks are exactly the kind of contract that shifts across scionproto
+// bumps, and a double close of sigUp would panic the whole agent.
+func closeOnce(ch chan<- struct{}) func() {
+	var once sync.Once
+	return func() { once.Do(func() { close(ch) }) }
 }
