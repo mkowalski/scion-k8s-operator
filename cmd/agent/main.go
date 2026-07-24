@@ -22,6 +22,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	scionlog "github.com/scionproto/scion/pkg/log"
+
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/bootstrap"
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/config"
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/daemonapi"
@@ -38,6 +40,13 @@ const daemonAPIAddr = "127.0.0.1:30255"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Initialize the scionproto logger; without this the embedded
+	// gateway/daemon libraries log nothing, hiding control-plane errors
+	// (e.g. remote gateway discovery failures).
+	if err := scionlog.Setup(scionlog.Config{Console: scionlog.ConsoleConfig{Level: "info"}}); err != nil {
+		log.Error("scion log setup failed", "err", err)
+		os.Exit(1)
+	}
 	if err := run(log); err != nil {
 		log.Error("agent failed", "err", err)
 		os.Exit(1)
