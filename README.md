@@ -93,6 +93,8 @@ automatically via the bundled registrar, or manually
 - [docs/decisions.md](docs/decisions.md) — decision log
 - [docs/known-gaps.md](docs/known-gaps.md) — honest list of what is not yet
   verified or implemented
+- [docs/handoff.md](docs/handoff.md) — full project state snapshot (repos,
+  branches, live environment, next steps) for picking the work up cold
 
 ## Development
 
