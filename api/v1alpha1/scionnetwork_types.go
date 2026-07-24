@@ -6,7 +6,7 @@ import (
 )
 
 // BootstrapSpec configures how node agents discover the SCION AS.
-// +kubebuilder:validation:XValidation:rule="self.mode != 'url' || size(self.discoveryURL) > 0",message="discoveryURL required when mode is url"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'url' || (has(self.discoveryURL) && size(self.discoveryURL) > 0)",message="discoveryURL required when mode is url"
 type BootstrapSpec struct {
 	// Mode selects the bootstrap discovery mechanism.
 	// +kubebuilder:validation:Enum=url;dns;dhcp;mdns
@@ -63,7 +63,7 @@ type DataplaneSpec struct {
 }
 
 // RegistrarSpec configures how SIG endpoints are registered with the AS.
-// +kubebuilder:validation:XValidation:rule="self.backend == 'manual' || size(self.endpoint) > 0",message="endpoint required when backend is not manual"
+// +kubebuilder:validation:XValidation:rule="self.backend == 'manual' || (has(self.endpoint) && size(self.endpoint) > 0)",message="endpoint required when backend is not manual"
 type RegistrarSpec struct {
 	// Backend selects the registration mechanism.
 	// +kubebuilder:validation:Enum=manual;http;anapaya
