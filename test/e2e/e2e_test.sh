@@ -10,7 +10,10 @@ NAMESPACE=scion-system
 OPERATOR_DEPLOY=scion-operator
 AGENT_DS=scion-node-agent
 TUN_NAME=${TUN_NAME:-scion0}
-TEST_IMAGE=${TEST_IMAGE:-registry.access.redhat.com/ubi9/ubi-minimal}
+# fedora-toolbox ships iputils ping that works unprivileged (ICMP datagram
+# sockets); ubi-minimal/ubi/fedora base images have no ping, busybox ping
+# needs raw sockets. Verified locally with podman.
+TEST_IMAGE=${TEST_IMAGE:-registry.fedoraproject.org/fedora-toolbox:latest}
 TEST_POD=scion-e2e-ping
 
 DEFAULT_PHASES="deploy configure assert_agents assert_dataplane assert_registration churn undeploy"
@@ -23,10 +26,25 @@ ok()   { printf 'OK %s\n' "$1"; }
 skip() { printf 'SKIP %s: %s\n' "$1" "$2"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+dump_diagnostics() {
+    printf '--- diagnostics (best-effort) ---\n' >&2
+    oc -n "$NAMESPACE" get pods -o wide >&2 || true
+    oc get scionnetwork cluster -o yaml 2>/dev/null | tail -40 >&2 || true
+    oc -n "$NAMESPACE" get events --sort-by=.lastTimestamp 2>/dev/null | tail -20 >&2 || true
+    local agent_pod
+    agent_pod=$(oc -n "$NAMESPACE" get pods -l app="$AGENT_DS" \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [ -n "$agent_pod" ]; then
+        printf '--- logs %s (last 30 lines) ---\n' "$agent_pod" >&2
+        oc -n "$NAMESPACE" logs "$agent_pod" --tail=30 >&2 || true
+    fi
+}
+
 on_exit() {
     local rc=$?
     if [ "$rc" -ne 0 ] && [ -n "$CURRENT_PHASE" ]; then
         printf 'FAILED phase: %s\n' "$CURRENT_PHASE" >&2
+        dump_diagnostics
     fi
 }
 trap on_exit EXIT
@@ -104,7 +122,7 @@ check_registration() {
     sigs=$(registrar_sigs)
     log "registrar managed set: $sigs"
     while IFS= read -r node; do
-        if ! printf '%s' "$sigs" | grep -q "\"$node\""; then
+        if ! printf '%s' "$sigs" | grep -Fq "\"$node\":"; then
             printf 'node %s missing from registrar managed set\n' "$node" >&2
             missing=1
         fi
@@ -236,6 +254,7 @@ undeploy() {
         oc delete -k config/manifests
     else
         log "KEEP_OPERATOR=1: leaving operator installed"
+        oc -n "$NAMESPACE" delete secret scion-registrar-token --ignore-not-found || true
     fi
     ok undeploy
 }

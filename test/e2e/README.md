@@ -34,7 +34,7 @@ success; the first failure prints `FAILED phase: <phase>` and exits non-zero.
 | `REGISTRAR_TOKEN` | same as `REGISTRAR_URL`                      | Bearer token for the registrar |
 | `REMOTE_PING_IP`  | `assert_dataplane`                           | An IP behind the remote SIG (dev topology target netns IP) |
 | `REMOTE_SSH`      | optional (`assert_dataplane`)                | ssh destination on the remote side for the inbound ping check; skipped if unset |
-| `TEST_IMAGE`      | optional                                     | Test pod image (default `registry.access.redhat.com/ubi9/ubi-minimal`) |
+| `TEST_IMAGE`      | optional                                     | Test pod image (default `registry.fedoraproject.org/fedora-toolbox:latest` — chosen because its iputils `ping` works unprivileged via ICMP datagram sockets; ubi-minimal/ubi/fedora base images ship no `ping`, and busybox `ping` needs raw sockets. Override with any image whose `ping` works in an unprivileged pod) |
 | `TUN_NAME`        | optional                                     | tun device name (default `scion0`) |
 | `PHASES`          | optional                                     | Space-separated subset of phases (default: all) |
 | `KEEP_OPERATOR`   | optional (`undeploy`)                        | Set to `1` to leave the operator installed after teardown |
