@@ -3,7 +3,7 @@ VERSION ?= 0.1.0-dev
 
 BUNDLE_VERSION ?= 0.1.0
 
-.PHONY: build test lint images manifests controller-gen envtest operator-sdk bundle
+.PHONY: build test lint images manifests controller-gen envtest operator-sdk kustomize bundle bundle-check
 
 build:
 	CGO_ENABLED=0 go build -o bin/agent ./cmd/agent
@@ -44,7 +44,18 @@ operator-sdk:
 # OLM bundle. config/olm holds the bundle-eligible subset (CRD, RBAC,
 # Deployment, sample CR); namespace and monitoring objects ship via the
 # plain kustomize path (config/manifests) because OLM bundles reject them.
-bundle: manifests operator-sdk
-	kustomize build --load-restrictor LoadRestrictionsNone config/olm | \
+bundle: manifests operator-sdk kustomize
+	$(KUSTOMIZE) build --load-restrictor LoadRestrictionsNone config/olm | \
 		$(OPERATOR_SDK) generate bundle --version $(BUNDLE_VERSION) --kustomize-dir config/manifests --package scion-operator
 	$(OPERATOR_SDK) bundle validate ./bundle
+
+KUSTOMIZE_VERSION ?= v5.8.1
+KUSTOMIZE = $(CURDIR)/bin/kustomize-$(KUSTOMIZE_VERSION)
+kustomize:
+	test -x $(KUSTOMIZE) || { GOBIN=$(CURDIR)/bin go install sigs.k8s.io/kustomize/kustomize/v5@$(KUSTOMIZE_VERSION) && mv $(CURDIR)/bin/kustomize $(KUSTOMIZE); }
+
+# Fail if the committed bundle/ is out of date with its inputs, ignoring
+# the volatile createdAt timestamp operator-sdk stamps into the CSV.
+bundle-check: bundle
+	git diff -I '^    createdAt:' --exit-code bundle/ || \
+		{ echo "bundle/ is out of date; run 'make bundle' and commit the result" >&2; exit 1; }
