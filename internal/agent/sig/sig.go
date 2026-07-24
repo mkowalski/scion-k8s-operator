@@ -11,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/scionproto/scion/gateway"
 	"github.com/scionproto/scion/gateway/dataplane"
@@ -157,5 +159,24 @@ func Run(ctx context.Context, p Params) error {
 	if p.OnUp != nil {
 		p.OnUp()
 	}
+	// The tun device is created inside gw.Run; enable IPv4 forwarding on
+	// it once it appears. OpenShift/RHCOS ships net.ipv4.ip_forward=0
+	// with per-interface forwarding enabled only on CNI-managed
+	// interfaces, so without this packets decapsulated onto the tun are
+	// never forwarded to pod interfaces (verified live: inbound frames
+	// reached scion0 but never ovn-k8s-mp0).
+	go func() {
+		path := filepath.Join("/proc/sys/net/ipv4/conf", p.TunName, "forwarding")
+		for i := 0; i < 60; i++ {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+			if err := os.WriteFile(path, []byte("1"), 0o644); err == nil {
+				return
+			}
+		}
+	}()
 	return gw.Run(ctx)
 }

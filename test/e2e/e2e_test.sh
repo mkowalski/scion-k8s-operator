@@ -203,7 +203,10 @@ assert_dataplane() {
         local pod_ip
         pod_ip=$(oc -n "$NAMESPACE" get pod "$TEST_POD" -o jsonpath='{.status.podIP}')
         log "inbound: ping $pod_ip from $REMOTE_SSH"
-        ssh "$REMOTE_SSH" ping -c 3 -W 5 "$pod_ip"
+        # Source from the remote SIG-side address: the remote host is
+        # multihomed and default source selection picks a non-SCION
+        # interface, so replies would never route back through the SIG.
+        ssh "$REMOTE_SSH" ping -c 3 -W 5 -I "$REMOTE_PING_IP" "$pod_ip"
     else
         skip "assert_dataplane(inbound)" "REMOTE_SSH not set; inbound path not verified"
     fi
