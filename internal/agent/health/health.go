@@ -10,6 +10,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// Readiness component names tracked by /readyz.
+const (
+	ComponentBootstrap = "bootstrap"
+	ComponentGateway   = "gateway"
+)
+
 type Health struct {
 	mu    sync.Mutex
 	ready map[string]bool
@@ -31,7 +37,7 @@ func (h *Health) Mux() *http.ServeMux {
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
-		for _, c := range []string{"bootstrap", "gateway"} {
+		for _, c := range []string{ComponentBootstrap, ComponentGateway} {
 			if !h.ready[c] {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				return

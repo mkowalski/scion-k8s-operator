@@ -71,7 +71,10 @@ const queryInterval = 5 * time.Minute
 // Run serves the sciond gRPC API on listenAddr until ctx is done.
 // configDir must contain topology.json and a certs/ directory; stateDir
 // holds the sqlite databases (sd.path.db, sd.trust.db).
-func Run(ctx context.Context, configDir, stateDir, listenAddr string) error {
+//
+// Run registers metrics on the global (default) prometheus registry and
+// therefore must be invoked at most once per process.
+func Run(ctx context.Context, configDir, stateDir, listenAddr string) (err error) {
 	topo, err := topology.NewLoader(topology.LoaderCfg{
 		File: filepath.Join(configDir, "topology.json"),
 		// Reload omitted: no SIGHUP-driven topology reload in the agent.
@@ -81,7 +84,17 @@ func Run(ctx context.Context, configDir, stateDir, listenAddr string) error {
 	if err != nil {
 		return serrors.Wrap("creating topology loader", err)
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	g, errCtx := errgroup.WithContext(ctx)
+	// Ensure goroutines started below are stopped and reaped on every
+	// return path (incl. early errors), without masking the first error.
+	defer func() {
+		cancel()
+		if werr := g.Wait(); err == nil {
+			err = werr
+		}
+	}()
 	g.Go(func() error {
 		defer log.HandlePanic()
 		return topo.Run(errCtx)
