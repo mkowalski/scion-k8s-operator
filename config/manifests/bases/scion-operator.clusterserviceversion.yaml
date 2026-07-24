@@ -1,0 +1,55 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  name: scion-operator.v0.0.0
+  namespace: placeholder
+  annotations:
+    capabilities: Basic Install
+    categories: Networking
+    repository: https://github.com/mkowalski/scion-k8s-operator
+    alm-examples: |-
+      [{"apiVersion":"scion.mkowalski.github.io/v1alpha1","kind":"ScionNetwork","metadata":{"name":"cluster"},"spec":{"bootstrap":{"mode":"url","discoveryURL":"http://scion-ds.example.org:8041"},"acceptPolicy":{"isdASes":["1-ff00:0:110"]}}}]
+spec:
+  displayName: SCION Operator
+  description: |
+    The SCION Operator makes every node of a Kubernetes cluster a first-class
+    SCION endhost with transparent IP-over-SCION connectivity. The operator
+    manages a per-node agent DaemonSet that bootstraps SCION endhost state,
+    maintains the local SCION stack, and provides a transparent IP-over-SCION
+    data path controlled by the cluster-scoped ScionNetwork resource.
+  maintainers:
+    - name: Mat Kowalski
+      email: mkowalski@users.noreply.github.com
+  provider:
+    name: Mat Kowalski
+    url: https://github.com/mkowalski
+  keywords:
+    - scion
+    - networking
+  links:
+    - name: SCION Kubernetes Operator
+      url: https://github.com/mkowalski/scion-k8s-operator
+  minKubeVersion: 1.30.0
+  installModes:
+    - type: OwnNamespace
+      supported: false
+    - type: SingleNamespace
+      supported: false
+    - type: MultiNamespace
+      supported: false
+    - type: AllNamespaces
+      supported: true
+  customresourcedefinitions:
+    owned:
+      - name: scionnetworks.scion.mkowalski.github.io
+        version: v1alpha1
+        kind: ScionNetwork
+        displayName: SCION Network
+        description: >-
+          Cluster-scoped configuration of SCION connectivity: bootstrap
+          discovery, path acceptance policy, and per-node agent settings.
+  install:
+    strategy: deployment
+    spec:
+      deployments: []
+  version: 0.0.0

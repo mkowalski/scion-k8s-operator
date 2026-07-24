@@ -1,0 +1,224 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: |-
+      [
+        {
+          "apiVersion": "scion.mkowalski.github.io/v1alpha1",
+          "kind": "ScionNetwork",
+          "metadata": {
+            "name": "cluster"
+          },
+          "spec": {
+            "acceptPolicy": {
+              "isdASes": [
+                "1-ff00:0:110"
+              ]
+            },
+            "bootstrap": {
+              "discoveryURL": "http://scion-ds.example.org:8041",
+              "mode": "url"
+            }
+          }
+        }
+      ]
+    capabilities: Basic Install
+    categories: Networking
+    createdAt: "2026-07-24T09:39:36Z"
+    operators.operatorframework.io/builder: operator-sdk-v1.42.3
+    operators.operatorframework.io/project_layout: unknown
+    repository: https://github.com/mkowalski/scion-k8s-operator
+  name: scion-operator.v0.1.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: 'Cluster-scoped configuration of SCION connectivity: bootstrap
+        discovery, path acceptance policy, and per-node agent settings.'
+      displayName: SCION Network
+      kind: ScionNetwork
+      name: scionnetworks.scion.mkowalski.github.io
+      version: v1alpha1
+  description: |
+    The SCION Operator makes every node of a Kubernetes cluster a first-class
+    SCION endhost with transparent IP-over-SCION connectivity. The operator
+    manages a per-node agent DaemonSet that bootstraps SCION endhost state,
+    maintains the local SCION stack, and provides a transparent IP-over-SCION
+    data path controlled by the cluster-scoped ScionNetwork resource.
+  displayName: SCION Operator
+  install:
+    spec:
+      clusterPermissions:
+      - rules:
+        - apiGroups:
+          - scion.mkowalski.github.io
+          resources:
+          - scionnetworks
+          - scionnetworks/status
+          - scionnetworks/finalizers
+          verbs:
+          - '*'
+        - apiGroups:
+          - apps
+          resources:
+          - daemonsets
+          verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - ""
+          resources:
+          - serviceaccounts
+          - namespaces
+          verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+          - patch
+        - apiGroups:
+          - rbac.authorization.k8s.io
+          resources:
+          - clusterroles
+          - clusterrolebindings
+          verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+          - patch
+        - apiGroups:
+          - security.openshift.io
+          resources:
+          - securitycontextconstraints
+          verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - ""
+          resources:
+          - nodes
+          - pods
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - config.openshift.io
+          resources:
+          - networks
+          verbs:
+          - get
+        serviceAccountName: scion-operator
+      deployments:
+      - label:
+          app: scion-operator
+        name: scion-operator
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: scion-operator
+          strategy: {}
+          template:
+            metadata:
+              labels:
+                app: scion-operator
+            spec:
+              containers:
+              - env:
+                - name: AGENT_IMAGE
+                  value: quay.io/mkowalski/scion-node-agent:0.1.0-dev
+                image: quay.io/mkowalski/scion-operator:0.1.0-dev
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8081
+                  initialDelaySeconds: 15
+                  periodSeconds: 20
+                name: operator
+                ports:
+                - containerPort: 8080
+                  name: metrics
+                readinessProbe:
+                  httpGet:
+                    path: /readyz
+                    port: 8081
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                resources:
+                  requests:
+                    cpu: 50m
+                    memory: 64Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+                  readOnlyRootFilesystem: true
+              securityContext:
+                runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
+              serviceAccountName: scion-operator
+      permissions:
+      - rules:
+        - apiGroups:
+          - coordination.k8s.io
+          resources:
+          - leases
+          verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+          - patch
+          - delete
+        - apiGroups:
+          - ""
+          resources:
+          - secrets
+          verbs:
+          - get
+          - list
+          - watch
+        serviceAccountName: scion-operator
+    strategy: deployment
+  installModes:
+  - supported: false
+    type: OwnNamespace
+  - supported: false
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  keywords:
+  - scion
+  - networking
+  links:
+  - name: SCION Kubernetes Operator
+    url: https://github.com/mkowalski/scion-k8s-operator
+  maintainers:
+  - email: mkowalski@users.noreply.github.com
+    name: Mat Kowalski
+  minKubeVersion: 1.30.0
+  provider:
+    name: Mat Kowalski
+    url: https://github.com/mkowalski
+  version: 0.1.0

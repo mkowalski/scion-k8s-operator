@@ -61,7 +61,7 @@ Makefile
 ### Task 1: Repository scaffolding
 
 **Files:**
-- Create: `go.mod`, `Makefile`, `.gitignore`, `hack/boilerplate.go.txt`
+- Create: `go.mod`, `Makefile`, `.gitignore`
 
 - [ ] **Step 1: Initialize module and pin scion**
 
@@ -1572,7 +1572,10 @@ Build: `podman build -f build/Dockerfile.agent -t scion-node-agent:dev .` → su
 
 - [ ] **Step 2: Dev SCION topology.** In `/tmp/opencode/scion` (or a fresh clone pinned to v0.15.0): `./scion.sh topology -c topology/tiny.topo && ./scion.sh run` brings up a local multi-AS topology (ASes `1-ff00:0:110..112`) with control services and routers on localhost. Document in `hack/dev-scion-topology/README.md`: how to start it, where per-AS `topology.json`/TRCs live (`gen/ASff00_0_112/`), and how to serve them with a one-line discovery server for the agent (`python3 -m http.server` exposing `/topology` and `/trcs` from a small script — include the script `hack/dev-scion-topology/serve-discovery.py` that maps `gen/ASff00_0_112/topology.json` → `/topology` and `gen/trcs/*.trc` → `/trcs`, `/trcs/<id>`).
 
-`hack/dev-scion-topology/serve-discovery.py`:
+`hack/dev-scion-topology/serve-discovery.py` (sketch below is SUPERSEDED: it
+predates the verified protocol — TRC blobs are fetched at
+`/trcs/isd{I}-b{B}-s{S}/blob`, note the `/blob` suffix. Committed version:
+hack/dev-scion-topology/serve-discovery.py (protocol-corrected)):
 
 ```python
 #!/usr/bin/env python3

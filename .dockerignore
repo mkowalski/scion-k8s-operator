@@ -1,0 +1,9 @@
+.git
+bin/
+docs/
+hack/
+test/
+/agent
+/operator
+/registrar
+*.md

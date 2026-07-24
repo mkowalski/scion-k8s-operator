@@ -1,0 +1,15 @@
+# The scion-system namespace hosts both the operator Deployment and the
+# operator-managed agent DaemonSet. Its lifecycle is owned by these
+# manifests, NOT by the ScionNetwork CR: the controller deliberately sets no
+# owner reference on it (GC on CR deletion would delete the operator too).
+# Labels must match render.NamespaceObj() so the operator's label merge is a
+# no-op.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: scion-system
+  labels:
+    app: scion-node-agent
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
