@@ -4,6 +4,7 @@
 package render
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 
@@ -68,6 +69,9 @@ func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string)
 	hostPathChar := corev1.HostPathCharDev
 	hostPathDir := corev1.HostPathDirectoryOrCreate
 	priv := false
+	// Intentionally unset (agent defaults are correct as-is):
+	// SCION_STATE_DIR (/var/lib/scion-node-agent), SCION_METRICS_ADDR
+	// (:9465), SCION_ENABLE_DAEMON_API (true).
 	env := []corev1.EnvVar{
 		{Name: "NODE_NAME", ValueFrom: &corev1.EnvVarSource{
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"}}},
@@ -112,7 +116,7 @@ func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string)
 					ServiceAccountName: agentName,
 					HostNetwork:        true,
 					PriorityClassName:  "system-node-critical",
-					NodeSelector:       sn.Spec.NodeSelector,
+					NodeSelector:       maps.Clone(sn.Spec.NodeSelector),
 					Tolerations: append(append([]corev1.Toleration{}, sn.Spec.Tolerations...),
 						corev1.Toleration{Operator: corev1.TolerationOpExists}),
 					Containers: []corev1.Container{{
@@ -198,10 +202,8 @@ func SCC() *unstructured.Unstructured {
 		"allowPrivilegeEscalation": false,
 		"allowPrivilegedContainer": false,
 		"allowedCapabilities":      []interface{}{"NET_ADMIN"},
-		"defaultAddCapabilities":   nil,
 		"fsGroup":                  map[string]interface{}{"type": "RunAsAny"},
 		"readOnlyRootFilesystem":   false,
-		"requiredDropCapabilities": nil,
 		"runAsUser":                map[string]interface{}{"type": "RunAsAny"},
 		"seLinuxContext":           map[string]interface{}{"type": "RunAsAny"},
 		"supplementalGroups":       map[string]interface{}{"type": "RunAsAny"},
