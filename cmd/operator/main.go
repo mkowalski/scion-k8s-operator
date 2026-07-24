@@ -45,6 +45,8 @@ func main() {
 
 	// SCC availability: OpenShift exposes security.openshift.io/v1; on
 	// vanilla Kubernetes the group is absent and the SCC is not applied.
+	// Note: a transient discovery failure here also yields sccAvail=false,
+	// meaning the SCC is skipped until the operator restarts.
 	sccAvail := false
 	if dc, err := discovery.NewDiscoveryClientForConfig(cfg); err == nil {
 		if _, err := dc.ServerResourcesForGroupVersion("security.openshift.io/v1"); err == nil {

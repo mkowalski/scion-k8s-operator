@@ -62,6 +62,7 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	forbidden, err := r.clusterForbiddenCIDRs(ctx, sn)
 	if err != nil {
+		r.markApplyFailed(ctx, sn, err)
 		return ctrl.Result{}, err
 	}
 	image := sn.Spec.AgentImage
@@ -70,6 +71,7 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if err := r.apply(ctx, sn, image, forbidden); err != nil {
+		r.markApplyFailed(ctx, sn, err)
 		return ctrl.Result{}, err
 	}
 
@@ -89,21 +91,33 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{}, nil
 }
 
+// markApplyFailed surfaces a persistent apply/config-read failure as a
+// Degraded=True condition. Best-effort: the status-update error is ignored
+// because the caller returns the original error, which triggers a retry.
+func (r *ScionNetworkReconciler) markApplyFailed(ctx context.Context, sn *v1alpha1.ScionNetwork, applyErr error) {
+	meta.SetStatusCondition(&sn.Status.Conditions, metav1.Condition{
+		Type: "Degraded", Status: metav1.ConditionTrue,
+		Reason: "ApplyFailed", Message: applyErr.Error(),
+		ObservedGeneration: sn.Generation,
+	})
+	_ = r.Status().Update(ctx, sn)
+}
+
 // apply creates or updates all managed objects. Every object carries an
 // owner reference to the ScionNetwork; a cluster-scoped owner is valid for
 // both cluster-scoped and namespaced dependents.
 func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNetwork, image string, forbidden []string) error {
-	// Namespace first: the namespaced objects need it.
+	// Namespace first: the namespaced objects need it. The ScionNetwork
+	// owns scion-system, so deleting the CR garbage-collects the whole
+	// namespace (and everything in it). The owner ref is (re)applied inside
+	// the mutate closure so a stripped ownerRef is repaired on reconcile.
 	ns := render.NamespaceObj()
-	if err := ctrl.SetControllerReference(sn, ns, r.Scheme); err != nil {
-		return err
-	}
-	if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, ns, func() error {
-		wantLabels := render.NamespaceObj().Labels
+	wantNSLabels := render.NamespaceObj().Labels
+	if err := r.applyObject(ctx, sn, ns, func() error {
 		if ns.Labels == nil {
 			ns.Labels = map[string]string{}
 		}
-		for k, v := range wantLabels {
+		for k, v := range wantNSLabels {
 			ns.Labels[k] = v
 		}
 		return nil
@@ -281,12 +295,17 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 	setCond("Degraded", isDegraded, "UnreadyAgents",
 		fmt.Sprintf("unready nodes: %v", degraded))
 
+	if err := r.Status().Update(ctx, sn); err != nil {
+		return false, err
+	}
+	// Flip the gauge only after status was persisted so the metric and the
+	// observable condition agree.
 	if isDegraded {
 		degradedGauge.Set(1)
 	} else {
 		degradedGauge.Set(0)
 	}
-	return available, r.Status().Update(ctx, sn)
+	return available, nil
 }
 
 func podReady(p *corev1.Pod) bool {

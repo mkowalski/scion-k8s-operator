@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -8,9 +10,15 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1alpha1 "github.com/mkowalski/scion-k8s-operator/api/v1alpha1"
 	"github.com/mkowalski/scion-k8s-operator/internal/operator/render"
@@ -137,4 +145,51 @@ func TestReconcileRepairsDeletedDaemonSet(t *testing.T) {
 		got := &appsv1.DaemonSet{}
 		return k8sClient.Get(ctx, dsKey(), got) == nil && got.UID != uid
 	}, "DaemonSet not recreated after delete")
+}
+
+// TestApplyFailureSurfacesDegraded uses the fake client (no envtest) with an
+// interceptor that fails DaemonSet creation, asserting the reconciler
+// records Degraded=True/ApplyFailed in status before returning the error.
+func TestApplyFailureSurfacesDegraded(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	sn := newScionNetwork()
+	boom := errors.New("injected daemonset failure")
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sn).
+		WithStatusSubresource(&v1alpha1.ScionNetwork{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if _, ok := obj.(*appsv1.DaemonSet); ok {
+					return boom
+				}
+				return cl.Create(ctx, obj, opts...)
+			},
+		}).
+		Build()
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme, AgentImage: testAgentImage}
+
+	_, err := r.Reconcile(context.Background(),
+		reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}})
+	if err == nil || !strings.Contains(err.Error(), "injected daemonset failure") {
+		t.Fatalf("Reconcile error = %v, want injected failure", err)
+	}
+
+	got := &v1alpha1.ScionNetwork{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "cluster"}, got); err != nil {
+		t.Fatal(err)
+	}
+	cond := apimeta.FindStatusCondition(got.Status.Conditions, "Degraded")
+	if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != "ApplyFailed" {
+		t.Fatalf("Degraded condition = %+v, want True/ApplyFailed", cond)
+	}
+	if !strings.Contains(cond.Message, "injected daemonset failure") {
+		t.Fatalf("Degraded message = %q, want to contain the error", cond.Message)
+	}
 }
