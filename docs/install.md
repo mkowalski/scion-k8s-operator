@@ -68,7 +68,7 @@ How node agents discover the local SCION AS
 | `discoveryURL` | Bootstrap server URL. Required when `mode: url` (CEL-enforced). |
 | `dnsDomain` | Search domain for DNS-based discovery (`mode: dns`); defaults to the system search domain. |
 | `dhcpInterface` | Network interface for DHCP-based discovery (`mode: dhcp`). |
-| `secretRef` | Name of a Secret in `scion-system` holding pinned TRCs (see below) and/or credentials for authenticated bootstrap. |
+| `secretRef` | Name of a Secret in `scion-system` holding pinned TRCs (see below); keys must be TRC filenames (e.g. `ISD1-B1-S1.trc`). Authenticated bootstrap is not yet implemented. |
 | `refreshInterval` | How often topology/TRCs are re-fetched. Go duration string (validated by pattern); default `1h`. |
 
 ### spec.advertisement (optional)

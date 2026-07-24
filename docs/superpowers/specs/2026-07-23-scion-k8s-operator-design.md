@@ -315,3 +315,18 @@ into one standard mechanism.
 - A UWM-safe alert (`ScionNodeAgentAbsent`, based on `absent(up{...})`)
   was added because `kube_daemonset_status_number_unavailable` is a
   platform metric invisible to the user-workload-monitoring ruler.
+- Authenticated bootstrap is not implemented: `spec.bootstrap.secretRef`
+  only mounts pinned TRCs (keys are TRC filenames).
+- `status.prefixes` (advertised/learned counts) is not implemented; it
+  needs an agent→operator reporting channel that does not exist yet
+  (future work).
+- Dataplane MTU overrides are not implemented; the MTU comes from the AS
+  topology.
+- The agent's dedicated bootstrap-state metric is not implemented; only
+  the embedded SCION components' own metrics are exposed.
+- ServiceMonitor and PrometheusRule ship as static manifests in
+  config/manifests, not as operator-managed objects.
+- `status.isdAS` is populated by the operator only for the `url`
+  bootstrap mode (the operator itself fetches `<discoveryURL>/topology`);
+  for dns/dhcp/mdns modes discovery happens on the nodes and the field
+  stays empty (future: agent-reported).

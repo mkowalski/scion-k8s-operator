@@ -117,8 +117,9 @@ spec:
                     type: string
                   secretRef:
                     description: |-
-                      SecretRef optionally holds credentials for authenticated bootstrap
-                      (Anapaya) and/or pinned TRCs under key "pinned-trcs".
+                      SecretRef optionally names a Secret mounted as pinned TRCs; keys
+                      must be TRC filenames (e.g. ISD1-B1-S1.trc). Authenticated bootstrap
+                      is not yet implemented.
                     properties:
                       name:
                         default: ""

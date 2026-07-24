@@ -20,8 +20,9 @@ type BootstrapSpec struct {
 	// DHCPInterface is the network interface used for DHCP-based discovery.
 	// +optional
 	DHCPInterface string `json:"dhcpInterface,omitempty"`
-	// SecretRef optionally holds credentials for authenticated bootstrap
-	// (Anapaya) and/or pinned TRCs under key "pinned-trcs".
+	// SecretRef optionally names a Secret mounted as pinned TRCs; keys
+	// must be TRC filenames (e.g. ISD1-B1-S1.trc). Authenticated bootstrap
+	// is not yet implemented.
 	// +optional
 	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
 	// RefreshInterval is how often the bootstrap data is refreshed.
