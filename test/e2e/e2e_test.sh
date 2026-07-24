@@ -157,6 +157,14 @@ spec:
   acceptPolicy:
     isdASes:
       - "$REMOTE_ISD_AS"
+  # Node IPs share the NIC that carries the SCION underlay in this test
+  # topology. Advertising them makes the remote side route all traffic to
+  # the nodes -- including the SCION underlay itself -- through the SIG
+  # tunnel, creating a routing loop that blackholes probe replies and
+  # control-plane discovery. Advertise pod CIDRs only.
+  advertisement:
+    podCIDR: true
+    nodeIP: false
   registrar:
     backend: http
     endpoint: "$REGISTRAR_URL"
