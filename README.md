@@ -1,63 +1,57 @@
-# scion-k8s-operator
+<p align="center">
+  <img src="drawings/logo_text.svg" alt="scion-k8s-operator" width="440">
+</p>
 
-Makes every node of an OpenShift cluster a first-class [SCION](https://scion.org)
-endhost with transparent, bidirectional IP-over-SCION connectivity. A cluster
-operator manages a per-node agent that bootstraps against the local SCION AS,
-runs an embedded SCION daemon (path lookup, trust) and an embedded per-node
-SCION-IP gateway (a `scion0` tun device with dynamic prefix exchange), so
-non-SCION-aware workloads reach — and are reachable from — remote SCION
-networks with zero changes.
+scion-k8s-operator makes every node of an OpenShift/Kubernetes cluster a
+first-class [SCION](https://scion.org) endhost, designed to terminate
+IP-in-SCION tunneling directly on the node and expose transparent,
+bidirectional SCION connectivity to unmodified workloads.
 
-## Architecture
+**This project is in the early stage of development. Use carefully!**
 
-```
-scion-operator (Deployment, 1 replica, namespace scion-system)
-  watches:  ScionNetwork (cluster-scoped CRD, singleton "cluster")
-  manages:  scion-node-agent DaemonSet, SCC, ServiceAccount, RBAC,
-            aggregated status conditions
-        |                                    registrar controller
-        v                                    (manual | http | anapaya)
-scion-node-agent (DaemonSet, every node,          |
-                  hostNetwork)                    | PUT /v1/sigs
-  +-----------+  +---------------+  +----------+  v
-  | bootstrap |  | daemon module |  | gateway  |  scion-registrar
-  | topology  |->| paths, trust, |->| (SIG)    |  (AS-side service,
-  | + TRCs    |  | gRPC :30255   |  | tun      |  patches topology.json
-  +-----------+  | (opt-in)      |  | scion0,  |  sigs + SIGHUP-reloads
-                 +---------------+  | SGRP     |  the control service)
-                                    +----------+
-                                          |
-                                          v
-                              SCION AS infrastructure
-                        (control service, border router)
-```
+## Enable transparent IP-over-SCION in your cluster
+
+scion-k8s-operator gives any workload — pods and host processes alike —
+connectivity to remote SCION networks with zero application changes. Egress
+to remote SCION prefixes is steered through a per-node tun device; inbound
+traffic reaches pod and node IPs because every node advertises its own pod
+CIDR and node IP into the SCION AS.
+
+Behaving as a per-node SCION-IP gateway, the integration is seamless,
+exactly as if a physical SCION gateway appliance was moved inside the node.
+
+## Enable SCION-native applications
+
+Every node also exposes the standard SCION daemon API on
+`127.0.0.1:30255`, so path-aware applications (snet, PAN, scion-sdk) get
+native SCION sockets out of the box — no sidecars, no extra daemons.
+
+## Overview
+
+Where we normally have cluster nodes sending plain IP toward an external
+SCION gateway appliance (a SIG or Anapaya EDGE), which tunnels it into the
+SCION network, scion-k8s-operator runs the whole SCION endhost stack —
+bootstrap, daemon, and SCION-IP gateway — directly on every node.
+
+After the operator is deployed and a `ScionNetwork` is configured, each node
+bootstraps against the local SCION AS, brings up a `scion0` tun device, and
+exchanges prefixes with remote gateways. The abstraction is as if the SCION
+gateway appliance was moved inside the node:
+
+<img src="drawings/scion-description.svg" alt="Overview: external SIG vs in-node SCION stack" style="width: 90%; max-width: 800px;">
+
+The operator watches a single cluster-scoped `ScionNetwork` resource,
+manages the per-node agent DaemonSet, and — through a pluggable registrar —
+keeps the AS-side gateway registration in sync as nodes come and go:
+
+<img src="drawings/scion-architecture.svg" alt="Component architecture" style="width: 90%; max-width: 800px;">
 
 ## Quick start
 
-Prerequisites:
-
-- An OpenShift cluster. OpenShift 5.x is the primary target; note the
-  platform research behind this design (SCC, OVN-K shared-gateway SNAT,
-  user-workload monitoring) was validated against OpenShift 4.x and is
-  expected — but must be re-verified — to carry over to 5.x.
-- A SCION AS you can attach to (open-source control service + border
-  router, or Anapaya EDGE), with a way to register SIG endpoints — see
-  [docs/as-registration.md](docs/as-registration.md).
-- UDP reachability between cluster nodes and the remote SIGs on ports
-  30056 (data), 30256 (SIG control), and 30856 (probe), both directions.
-
-Install (kustomize path):
-
-```sh
+```bash
 oc apply -k config/manifests
+oc apply -f config/samples/scion_v1alpha1_scionnetwork.yaml   # edit first
 ```
-
-Image knobs: the operator image is `spec.template.spec.containers[].image`
-in `config/manifests/operator.yaml`; the agent image is the `AGENT_IMAGE`
-env var on the same container (overridable per-ScionNetwork via
-`spec.agentImage`). Patch via a kustomize overlay or edit in place.
-
-Then create the singleton ScionNetwork (name must be `cluster`):
 
 ```yaml
 apiVersion: scion.mkowalski.github.io/v1alpha1
@@ -73,36 +67,45 @@ spec:
       - 1-ff00:0:110
 ```
 
-An OLM bundle is also available: `make bundle` regenerates `bundle/`, and
-`operator-sdk run bundle` installs it. See
-[docs/install.md](docs/install.md) for the full walkthrough, every
-ScionNetwork field, pinned TRCs, and registrar credentials.
+Requirements: a SCION AS (open-source control service + border router,
+Anapaya EDGE, or a [SCIONLab](https://www.scionlab.org) user AS) reachable
+from the nodes, with UDP 30056/30256/30856 open, and the node SIGs
+registered AS-side — automatically via the bundled registrar, or manually
+(see [docs/as-registration.md](docs/as-registration.md)).
 
-## Status and observability
+## Check the documentation
 
-- `oc get scionnetwork cluster` shows the discovered ISD-AS and ready node
-  count; `status.conditions` carries `Available`, `Progressing`, and
-  `Degraded`.
-- Agents expose Prometheus metrics on port 9465; the operator on 8080.
-  `config/manifests/monitoring.yaml` ships Services, ServiceMonitors, and
-  a PrometheusRule with three alerts: `ScionNodeAgentDown`,
-  `ScionNodeAgentAbsent` (user-workload-monitoring-safe fallback), and
-  `ScionNetworkDegraded`.
+- [docs/install.md](docs/install.md) — full installation walkthrough, every
+  `ScionNetwork` field, OLM bundle path
+- [docs/as-registration.md](docs/as-registration.md) — AS-side gateway
+  registration (manual, registrar service, Anapaya)
+- [docs/research.md](docs/research.md) — SCION/Anapaya/OpenShift research
+  behind the design
+- [docs/decisions.md](docs/decisions.md) — decision log
+- [docs/known-gaps.md](docs/known-gaps.md) — honest list of what is not yet
+  verified or implemented
 
 ## Development
 
-Make targets: `build` (binaries into `bin/`), `test` (`go test ./...
--count=1`), `lint`, `manifests` (regenerate CRD from `api/`), `images`
-(podman-build the three images, `IMG_REGISTRY`/`VERSION` knobs), `bundle`
-(regenerate the OLM bundle), `bundle-check` (fail if `bundle/` is stale),
-`envtest` (install setup-envtest for the controller suite).
-
-A local multi-AS SCION dev topology plus a bootstrapping discovery server
-lives in [hack/dev-scion-topology](hack/dev-scion-topology/README.md).
-Integration tests: `test/integration/agent_test.sh` (two-netns end-to-end)
-and `test/integration/discovery_test.sh`. OpenShift end-to-end:
-`test/e2e/e2e_test.sh` (see [test/e2e/README.md](test/e2e/README.md)).
+Make targets: `build`, `test`, `lint`, `manifests` (regenerate CRD),
+`images` (`IMG_REGISTRY`/`VERSION` knobs), `bundle` / `bundle-check` (OLM),
+`envtest`. A local multi-AS SCION dev topology plus a discovery server lives
+in [hack/dev-scion-topology](hack/dev-scion-topology/README.md); integration
+tests in [test/integration](test/integration), OpenShift end-to-end in
+[test/e2e](test/e2e/README.md).
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Copyright 2026.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
