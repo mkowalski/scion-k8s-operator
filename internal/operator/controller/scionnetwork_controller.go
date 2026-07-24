@@ -286,8 +286,7 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 	progressing := !dsCurrent || total == 0 || ready < total
 	// TODO: refine Degraded to "pod unready for >5m" once pod transition
 	// timestamps are tracked; for now any unready pod marks Degraded.
-	regDegraded := regFailed && sn.Spec.Registrar.Backend != "" && sn.Spec.Registrar.Backend != "manual"
-	isDegraded := ready < total || regDegraded
+	isDegraded, reason := degradedReason(ready, total, regFailed, sn.Spec.Registrar.Backend)
 
 	sn.Status.Nodes = v1alpha1.NodeSummary{Ready: ready, Total: total, Degraded: degraded}
 	sn.Status.Registrar = reg
@@ -305,11 +304,11 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 		fmt.Sprintf("%d/%d node agents ready", ready, total))
 	setCond("Progressing", progressing, "Rollout",
 		fmt.Sprintf("%d/%d node agents ready", ready, total))
-	degradedReason, degradedMsg := "UnreadyAgents", fmt.Sprintf("unready nodes: %v", degraded)
-	if regDegraded && ready >= total {
-		degradedReason, degradedMsg = "RegistrarSyncFailed", reg.LastError
+	degradedMsg := fmt.Sprintf("unready nodes: %v", degraded)
+	if reason == "RegistrarSyncFailed" {
+		degradedMsg = reg.LastError
 	}
-	setCond("Degraded", isDegraded, degradedReason, degradedMsg)
+	setCond("Degraded", isDegraded, reason, degradedMsg)
 
 	if err := r.Status().Update(ctx, sn); err != nil {
 		return false, err

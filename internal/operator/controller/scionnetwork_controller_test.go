@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -138,7 +139,11 @@ func TestRegistrarDesiredSIGsPublished(t *testing.T) {
 	if err := k8sClient.Create(ctx, node); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(ctx, node) })
+	t.Cleanup(func() {
+		if err := k8sClient.Delete(ctx, node); err != nil && !apierrors.IsNotFound(err) {
+			t.Errorf("delete node: %v", err)
+		}
+	})
 	node.Status.Addresses = []corev1.NodeAddress{
 		{Type: corev1.NodeInternalIP, Address: "192.0.2.10"},
 	}

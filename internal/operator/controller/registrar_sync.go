@@ -33,12 +33,12 @@ const (
 const registrarTimeout = 30 * time.Second
 
 // nodesToSIGs maps nodes matching selector to their SIG endpoints, sorted
-// by node name for deterministic status output. Nodes without an
-// InternalIP are skipped (the caller logs them); an empty selector matches
-// all nodes, mirroring DaemonSet nodeSelector semantics.
-func nodesToSIGs(nodes []corev1.Node, selector map[string]string) []registrar.SIG {
+// by node name for deterministic status output. Selected nodes without an
+// InternalIP are dropped and returned as skipped names (the caller logs
+// them); an empty selector matches all nodes, mirroring DaemonSet
+// nodeSelector semantics.
+func nodesToSIGs(nodes []corev1.Node, selector map[string]string) (sigs []registrar.SIG, skipped []string) {
 	sel := labels.SelectorFromSet(selector)
-	var sigs []registrar.SIG
 	for i := range nodes {
 		n := &nodes[i]
 		if !sel.Matches(labels.Set(n.Labels)) {
@@ -52,6 +52,7 @@ func nodesToSIGs(nodes []corev1.Node, selector map[string]string) []registrar.SI
 			}
 		}
 		if ip == "" {
+			skipped = append(skipped, n.Name)
 			continue
 		}
 		sigs = append(sigs, registrar.SIG{
@@ -63,7 +64,8 @@ func nodesToSIGs(nodes []corev1.Node, selector map[string]string) []registrar.SI
 	slices.SortFunc(sigs, func(a, b registrar.SIG) int {
 		return strings.Compare(a.Name, b.Name)
 	})
-	return sigs
+	slices.Sort(skipped)
+	return sigs, skipped
 }
 
 // backendFor selects the registrar backend from spec. For http, the bearer
@@ -73,15 +75,20 @@ func (r *ScionNetworkReconciler) backendFor(ctx context.Context, sn *v1alpha1.Sc
 	case "", "manual":
 		return registrar.Manual{}, nil
 	case "http":
-		token := ""
 		if ref := sn.Spec.Registrar.CredentialsSecretRef; ref != nil {
 			sec := &corev1.Secret{}
 			if err := r.Get(ctx, types.NamespacedName{Namespace: render.Namespace, Name: ref.Name}, sec); err != nil {
 				return nil, fmt.Errorf("read credentials secret %s/%s: %w", render.Namespace, ref.Name, err)
 			}
-			token = string(sec.Data["token"])
+			token, ok := sec.Data["token"]
+			if !ok {
+				return nil, fmt.Errorf("credentials secret %q has no \"token\" key", ref.Name)
+			}
+			return &registrar.HTTP{Endpoint: sn.Spec.Registrar.Endpoint, Token: string(token)}, nil
 		}
-		return &registrar.HTTP{Endpoint: sn.Spec.Registrar.Endpoint, Token: token}, nil
+		// No secret ref: send an empty token; the AS-side service fails
+		// closed on empty tokens, surfacing the misconfiguration.
+		return &registrar.HTTP{Endpoint: sn.Spec.Registrar.Endpoint}, nil
 	case "anapaya":
 		return registrar.Anapaya{}, nil
 	default:
@@ -104,8 +111,8 @@ func (r *ScionNetworkReconciler) syncRegistrar(ctx context.Context, sn *v1alpha1
 		st.LastError = fmt.Sprintf("list nodes: %v", err)
 		return st, true
 	}
-	sigs := nodesToSIGs(nodes.Items, sn.Spec.NodeSelector)
-	if skipped := matchingWithoutIP(nodes.Items, sn.Spec.NodeSelector, sigs); len(skipped) > 0 {
+	sigs, skipped := nodesToSIGs(nodes.Items, sn.Spec.NodeSelector)
+	if len(skipped) > 0 {
 		ctrl.LoggerFrom(ctx).Info("nodes without InternalIP skipped from SIG registration", "nodes", skipped)
 	}
 
@@ -131,19 +138,17 @@ func (r *ScionNetworkReconciler) syncRegistrar(ctx context.Context, sn *v1alpha1
 	return st, false
 }
 
-// matchingWithoutIP returns selected node names that were dropped from the
-// SIG set for lacking an InternalIP.
-func matchingWithoutIP(nodes []corev1.Node, selector map[string]string, sigs []registrar.SIG) []string {
-	sel := labels.SelectorFromSet(selector)
-	have := make(map[string]bool, len(sigs))
-	for _, s := range sigs {
-		have[s.Name] = true
+// degradedReason decides the Degraded condition from agent readiness and
+// registrar sync state. Unready agents take precedence as the reason; a
+// registrar failure degrades only for non-manual backends (manual cannot
+// meaningfully fail from the AS side).
+func degradedReason(ready, total int32, regFailed bool, backend string) (bool, string) {
+	regDegraded := regFailed && backend != "" && backend != "manual"
+	if ready < total {
+		return true, "UnreadyAgents"
 	}
-	var out []string
-	for i := range nodes {
-		if sel.Matches(labels.Set(nodes[i].Labels)) && !have[nodes[i].Name] {
-			out = append(out, nodes[i].Name)
-		}
+	if regDegraded {
+		return true, "RegistrarSyncFailed"
 	}
-	return out
+	return false, "UnreadyAgents"
 }
