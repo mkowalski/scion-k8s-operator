@@ -6,6 +6,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	v1alpha1 "github.com/mkowalski/scion-k8s-operator/api/v1alpha1"
+	"github.com/mkowalski/scion-k8s-operator/internal/operator/registrar"
 	"github.com/mkowalski/scion-k8s-operator/internal/operator/render"
 )
 
@@ -124,24 +126,52 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	return ctrl.Result{}, nil
 }
 
+// deregistrationDeadline bounds how long a persistently failing registrar
+// Ensure may block ScionNetwork deletion, measured from the object's
+// deletionTimestamp. See finalize for the escape-hatch rationale (also
+// documented in docs/known-gaps.md).
+const deregistrationDeadline = 10 * time.Minute
+
 // finalize deregisters all node SIGs from the AS-side registrar (an Ensure
-// with an empty set) and then removes the finalizer. Backend construction
-// failures (e.g. the credentials Secret was already deleted) drop the
-// finalizer anyway: blocking deletion forever on a lost secret is worse
-// than leaving stale registrar entries, which the AS side can garbage
-// collect. Ensure failures are retried.
+// with an empty set) and then removes the finalizer. Blocking deletion
+// forever on a broken registrar is worse than leaving stale entries, which
+// the AS side can garbage collect, so the finalizer is dropped anyway when:
+//
+//   - backend construction fails (e.g. the credentials Secret was already
+//     deleted);
+//   - the backend is an unimplemented stub (ErrNotImplemented, e.g.
+//     anapaya) — a stub never registered anything, so there is nothing to
+//     deregister;
+//   - Ensure keeps failing past deregistrationDeadline after the
+//     deletionTimestamp — logged loudly; until then failures are retried
+//     with the controller's backoff.
+//
+// Manual escape hatch (documented in docs/known-gaps.md): remove the
+// finalizer by hand, e.g.
+// kubectl patch scionnetwork cluster --type=merge -p '{"metadata":{"finalizers":null}}'.
 func (r *ScionNetworkReconciler) finalize(ctx context.Context, sn *v1alpha1.ScionNetwork) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(sn, registrarFinalizer) {
 		return ctrl.Result{}, nil
 	}
+	log := ctrl.LoggerFrom(ctx)
 	backend, err := r.backendFor(ctx, sn)
 	if err != nil {
-		ctrl.LoggerFrom(ctx).Error(err,
+		log.Error(err,
 			"registrar backend unavailable during finalization; skipping deregistration")
 	} else {
 		ectx, cancel := context.WithTimeout(ctx, registrarTimeout)
 		defer cancel()
-		if err := backend.Ensure(ectx, nil); err != nil {
+		switch err := backend.Ensure(ectx, nil); {
+		case err == nil:
+		case errors.Is(err, registrar.ErrNotImplemented):
+			log.Info("registrar backend is an unimplemented stub; nothing was ever registered, skipping deregistration",
+				"backend", sn.Spec.Registrar.Backend)
+		case time.Since(sn.DeletionTimestamp.Time) > deregistrationDeadline:
+			log.Error(err,
+				"SIG deregistration still failing past the deletion deadline; releasing the finalizer WITHOUT deregistering — stale SIG entries may remain on the AS side",
+				"deadline", deregistrationDeadline.String(),
+				"deletionTimestamp", sn.DeletionTimestamp.String())
+		default:
 			return ctrl.Result{}, fmt.Errorf("deregister SIGs: %w", err)
 		}
 	}

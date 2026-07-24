@@ -25,6 +25,13 @@ this retired:
   registrar HTTP sync, control-service topology reload, and remote-SIG
   gateway discovery of the registered node SIGs all observed working.
   Deregistration on ScionNetwork deletion now works via a finalizer.
+  Deletion cannot wedge forever on a broken registrar: unimplemented stub
+  backends (anapaya) release immediately, and other persistent Ensure
+  failures are retried only until 10 minutes past the deletionTimestamp,
+  after which the operator logs loudly and drops the finalizer anyway
+  (stale SIG entries may remain on the AS side). Manual escape hatch:
+  `kubectl patch scionnetwork cluster --type=merge -p
+  '{"metadata":{"finalizers":null}}'`.
 - **OpenShift 5.x** (was gap 4): SCC and `oc debug node` verified; the
   OVN-K SNAT-path assumption was DISPROVEN — see below.
 - **Image builds**: operator and agent images build and run
