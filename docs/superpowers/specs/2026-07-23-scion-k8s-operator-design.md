@@ -283,3 +283,35 @@ into one standard mechanism.
   may change); control-service topology reload behavior on `sigs`
   changes must be validated.
 - AS-side registration friction with autoscaling node pools.
+
+## 9. Implementation deviations (as built)
+
+- Bootstrapper protocol corrections: TRC blobs are fetched from
+  `/trcs/isd{I}-b{B}-s{S}/blob` (not `/trcs/<file>`), and TRCs are stored
+  with upstream's uppercase naming `ISD{I}-B{B}-S{S}.trc`.
+- TRC pinning compares fetched TRCs against pin-file bytes mounted from
+  the bootstrap Secret (`<stateDir>/pinned-trcs/<name>`), not
+  trust-on-first-use.
+- The gateway embeds the daemon via `daemon.NewStandaloneConnector` (no
+  gRPC hop); the standard sciond gRPC API on `127.0.0.1:30255` is a
+  separate opt-in module (`SCION_ENABLE_DAEMON_API`, default on).
+- The embedded gateway's SIG control-plane ID is `scion-node-agent`
+  (upstream default is `gateway`).
+- Prefix guardrails are implemented as SGRP accept-policy prefix
+  subtraction (forbidden CIDRs carved out of accepted prefixes); no
+  custom netlink filtering layer.
+- Control-service topology reload on `sigs` changes was verified: SIGHUP
+  re-reads the file (v0.15.0 `private/topology/reload.go`); the registrar
+  defaults to `systemctl kill -s HUP scion-control`.
+- The registrar's heartbeat-based entry expiry (§3) was replaced by
+  full-set reconciliation on every PUT; unclean cluster removal can leave
+  stale entries until the next sync or manual cleanup
+  (docs/as-registration.md).
+- The `scion-system` Namespace is applied but deliberately NOT owner-ref'd
+  to the ScionNetwork: garbage-collecting it on CR deletion would delete
+  the operator itself. Namespace lifecycle belongs to the deploy manifests.
+- The ScionNetwork singleton is enforced via a CEL rule
+  (`metadata.name == 'cluster'`), not an admission webhook.
+- A UWM-safe alert (`ScionNodeAgentAbsent`, based on `absent(up{...})`)
+  was added because `kube_daemonset_status_number_unavailable` is a
+  platform metric invisible to the user-workload-monitoring ruler.
