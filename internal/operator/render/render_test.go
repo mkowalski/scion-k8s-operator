@@ -246,3 +246,19 @@ func TestSCC(t *testing.T) {
 		t.Fatalf("users: %v", obj["users"])
 	}
 }
+
+func TestNamespaceObj(t *testing.T) {
+	ns := NamespaceObj()
+	if ns.Name != "scion-system" {
+		t.Fatalf("name: %q", ns.Name)
+	}
+	for _, k := range []string{
+		"pod-security.kubernetes.io/enforce",
+		"pod-security.kubernetes.io/audit",
+		"pod-security.kubernetes.io/warn",
+	} {
+		if ns.Labels[k] != "privileged" {
+			t.Fatalf("label %s: %q", k, ns.Labels[k])
+		}
+	}
+}

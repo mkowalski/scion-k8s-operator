@@ -214,3 +214,15 @@ func SCC() *unstructured.Unstructured {
 		"groups": []interface{}{},
 	}}
 }
+
+// NamespaceObj renders the scion-system Namespace with pod-security labels
+// permitting the hostNetwork agent pods (privileged PSA level).
+func NamespaceObj() *corev1.Namespace {
+	l := labels()
+	for _, k := range []string{"enforce", "audit", "warn"} {
+		l["pod-security.kubernetes.io/"+k] = "privileged"
+	}
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: Namespace, Labels: l},
+	}
+}
