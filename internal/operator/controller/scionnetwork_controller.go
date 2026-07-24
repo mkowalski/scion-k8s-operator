@@ -75,12 +75,21 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
-	available, err := r.updateStatus(ctx, sn)
+	// Registrar sync failure must not fail the whole reconcile: the data
+	// plane keeps working without AS-side registration. The failure is
+	// surfaced in status (and Degraded for non-manual backends) and
+	// retried via RequeueAfter below.
+	regStatus, regFailed := r.syncRegistrar(ctx, sn)
+
+	available, err := r.updateStatus(ctx, sn, regStatus, regFailed)
 	if err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{Requeue: true}, nil
 		}
 		return ctrl.Result{}, err
+	}
+	if regFailed {
+		return ctrl.Result{RequeueAfter: time.Minute}, nil
 	}
 	if !available {
 		// Pod readiness changes do not trigger this controller (pods are
@@ -238,10 +247,12 @@ func dedupe(in []string) []string {
 }
 
 // updateStatus aggregates agent pod readiness into status.nodes and the
-// Available/Progressing/Degraded conditions. status.registrar is left
-// untouched (owned by the registrar controller). Returns whether the
+// Available/Progressing/Degraded conditions, and persists the registrar
+// status computed by syncRegistrar — one status write per reconcile. A
+// registrar failure marks Degraded (reason RegistrarSyncFailed) only for
+// non-manual backends; manual mode cannot fail. Returns whether the
 // ScionNetwork is fully available.
-func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.ScionNetwork) (bool, error) {
+func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.ScionNetwork, reg v1alpha1.RegistrarStatus, regFailed bool) (bool, error) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods,
 		client.InNamespace(render.Namespace),
@@ -275,9 +286,11 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 	progressing := !dsCurrent || total == 0 || ready < total
 	// TODO: refine Degraded to "pod unready for >5m" once pod transition
 	// timestamps are tracked; for now any unready pod marks Degraded.
-	isDegraded := ready < total
+	regDegraded := regFailed && sn.Spec.Registrar.Backend != "" && sn.Spec.Registrar.Backend != "manual"
+	isDegraded := ready < total || regDegraded
 
 	sn.Status.Nodes = v1alpha1.NodeSummary{Ready: ready, Total: total, Degraded: degraded}
+	sn.Status.Registrar = reg
 	setCond := func(t string, on bool, reason, msg string) {
 		st := metav1.ConditionFalse
 		if on {
@@ -292,8 +305,11 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 		fmt.Sprintf("%d/%d node agents ready", ready, total))
 	setCond("Progressing", progressing, "Rollout",
 		fmt.Sprintf("%d/%d node agents ready", ready, total))
-	setCond("Degraded", isDegraded, "UnreadyAgents",
-		fmt.Sprintf("unready nodes: %v", degraded))
+	degradedReason, degradedMsg := "UnreadyAgents", fmt.Sprintf("unready nodes: %v", degraded)
+	if regDegraded && ready >= total {
+		degradedReason, degradedMsg = "RegistrarSyncFailed", reg.LastError
+	}
+	setCond("Degraded", isDegraded, degradedReason, degradedMsg)
 
 	if err := r.Status().Update(ctx, sn); err != nil {
 		return false, err

@@ -123,6 +123,53 @@ func TestReconcileCreatesDaemonSet(t *testing.T) {
 	}, "status conditions not set (Progressing=True, Available=False)")
 }
 
+// TestRegistrarDesiredSIGsPublished creates a labeled node with an
+// InternalIP and asserts the default (manual) backend publishes the
+// desired SIG set in status.registrar.
+func TestRegistrarDesiredSIGsPublished(t *testing.T) {
+	skipIfNoEnvtest(t)
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "node1",
+			Labels: map[string]string{"role": "edge"},
+		},
+	}
+	if err := k8sClient.Create(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, node) })
+	node.Status.Addresses = []corev1.NodeAddress{
+		{Type: corev1.NodeInternalIP, Address: "192.0.2.10"},
+	}
+	if err := k8sClient.Status().Update(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+
+	sn := newScionNetwork()
+	sn.Spec.NodeSelector = map[string]string{"role": "edge"}
+	if err := k8sClient.Create(ctx, sn); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = k8sClient.Delete(ctx, sn) })
+
+	want := "node1=192.0.2.10:30256,192.0.2.10:30056"
+	eventually(t, func() bool {
+		got := &v1alpha1.ScionNetwork{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{Name: "cluster"}, got); err != nil {
+			return false
+		}
+		for _, s := range got.Status.Registrar.DesiredSIGs {
+			if s == want {
+				return got.Status.Registrar.RegisteredNodes == 1 &&
+					got.Status.Registrar.LastError == "" &&
+					got.Status.Registrar.LastSyncTime != nil
+			}
+		}
+		return false
+	}, "status.registrar.desiredSIGs missing "+want)
+}
+
 func TestReconcileRepairsDeletedDaemonSet(t *testing.T) {
 	skipIfNoEnvtest(t)
 
