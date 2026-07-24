@@ -115,3 +115,15 @@ uppercase filenames; `dhcpv4.OptionWWWServer` is actually
 policy load (blocking send on `ConfigReloadTrigger`); `ConfigVersion` in the
 traffic policy is parsed and ignored at v0.15.0; control service reloads
 topology on SIGHUP. Each is cited at the point of use in code comments.
+
+## D14: Border router stays in the AS infrastructure
+
+Only the endhost stack (bootstrap, daemon, SIG) moves into the node. The AS
+border router — inter-AS data-plane forwarding — remains AS-side: nodes
+speak SCION only as plain UDP to their local BR. Moving the BR into nodes
+(cilion-style node-as-router) would make the cluster an AS attachment point
+(inter-AS links, neighbor-allocated interface IDs, beaconing, transit
+failure domains) — rejected to keep nodes plain endhosts. Trade-off
+accepted: the AS BR(s) are a shared hairpin for all cluster ↔ SCION traffic;
+ASes scale this by running multiple BRs. See research.md "Where the border
+router fits".

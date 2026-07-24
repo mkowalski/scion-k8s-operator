@@ -30,8 +30,15 @@ native SCION sockets out of the box — no sidecars, no extra daemons.
 
 Where we normally have cluster nodes sending plain IP toward an external
 SCION gateway appliance (a SIG or Anapaya EDGE), which tunnels it into the
-SCION network, scion-k8s-operator runs the whole SCION endhost stack —
+SCION network, scion-k8s-operator runs the whole SCION **endhost** stack —
 bootstrap, daemon, and SCION-IP gateway — directly on every node.
+
+Only the endhost side moves into the node. The **AS border router** — the
+data-plane component that forwards SCION packets between ASes — stays in the
+AS infrastructure, together with the control service: every SCION packet a
+node sends or receives travels as plain UDP between the node and its local
+border router, which handles all inter-AS forwarding. Nodes are SCION
+endhosts, not routers.
 
 After the operator is deployed and a `ScionNetwork` is configured, each node
 bootstraps against the local SCION AS, brings up a `scion0` tun device, and
@@ -69,8 +76,10 @@ spec:
 
 Requirements: a SCION AS (open-source control service + border router,
 Anapaya EDGE, or a [SCIONLab](https://www.scionlab.org) user AS) reachable
-from the nodes, with UDP 30056/30256/30856 open, and the node SIGs
-registered AS-side — automatically via the bundled registrar, or manually
+from the nodes — the AS's **border router** is the only thing nodes need
+data-plane connectivity to, with UDP 30056/30256/30856 open between nodes
+and the AS infrastructure — and the node SIGs registered AS-side —
+automatically via the bundled registrar, or manually
 (see [docs/as-registration.md](docs/as-registration.md)).
 
 ## Check the documentation

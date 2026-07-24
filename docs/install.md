@@ -1,5 +1,20 @@
 # Installation guide
 
+## 0. Network prerequisites
+
+Nodes are SCION **endhosts**: they exchange all SCION traffic as plain UDP
+with the local AS's **border router**, which handles inter-AS forwarding.
+The border router (and control service) live in the AS infrastructure — an
+open-source AS, an Anapaya EDGE appliance, or a SCIONLab user AS — and are
+the only things nodes need reachability to:
+
+- UDP 30056 (SIG data), 30256 (SIG control), 30856 (SIG probes) open
+  between every node and the AS infrastructure, in both directions
+  (inbound traffic is delivered by the border router to the node's SIG
+  data port);
+- the discovery server (default port 8041) reachable from nodes for
+  bootstrap.
+
 ## 1. Build and push images
 
 Three images are built from `build/Dockerfile.{agent,operator,registrar}`:

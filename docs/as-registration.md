@@ -11,6 +11,11 @@ data address `<nodeIP>:30056` (probe on 30856). The operator computes the
 desired set from the nodes matching `spec.nodeSelector` and publishes it in
 `status.registrar.desiredSIGs` regardless of backend.
 
+Note on the data path: registration only makes node SIGs *discoverable*.
+The actual inbound packets arrive at the AS **border router**, which
+delivers them as plain UDP to the registered node's SIG data port — so the
+border router must be able to reach every node on UDP 30056/30256/30856.
+
 ## Manual backend (default)
 
 The operator only publishes the desired set; the AS operator applies it.

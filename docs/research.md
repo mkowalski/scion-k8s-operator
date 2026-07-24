@@ -5,6 +5,38 @@ Research performed 2026-07 (pre-implementation), backing the design in
 clones of scionproto/scion (v0.15.0) and netsec-ethz/bootstrapper, GitHub org
 surveys, OpenShift 4.x documentation and openshift/* repositories.
 
+## Where the border router fits
+
+The BR is the piece deliberately NOT moved into the node. Roles in an AS:
+
+| Component | Plane | In our design |
+|---|---|---|
+| Control service | Control: beaconing, path segments, TRCs, gateway discovery | AS infrastructure |
+| Border router (BR) | Data: forwards SCION packets between ASes; delivers packets to endhosts inside the AS as plain UDP/IP | AS infrastructure |
+| Endhost stack (daemon + SIG) | Data edge: path selection, IP-in-SCION encap/decap | moved into every node |
+
+Every packet's path: pod → OVN-K SNAT → host route → `scion0` (node SIG
+encapsulates) → **UDP to the local AS border router** → inter-AS hops →
+destination AS's BR → UDP to the remote SIG → decap. Inbound is the mirror:
+our BR receives SCION packets from the network and delivers them as plain
+UDP to the node SIG's data port (30056). A node never speaks SCION wire
+format to anything except its local BR.
+
+Consequences:
+- `topology.json` (fetched at bootstrap) matters chiefly because it carries
+  the **BR internal interface addresses** — where the node sends every SCION
+  packet — plus control service addresses and `sigs`/`dispatched_ports`.
+- The UDP reachability requirement (30056/30256/30856) is node ↔ AS
+  infrastructure; the BR is the only data-plane dependency of a node.
+- The BR is a shared hairpin: per-node SIGs parallelize encapsulation, but
+  all cluster ↔ SCION traffic funnels through the AS's BR(s). ASes scale by
+  running multiple BRs; the daemon picks per selected path.
+- Moving the BR into nodes (cilion-style, node-as-router) would make the
+  cluster an AS attachment point: inter-AS links, interface IDs allocated by
+  neighbors, beaconing participation, and transit failure domains — rejected
+  to keep nodes plain endhosts (no keys, no per-link peering; see
+  decisions.md D14).
+
 ## SCION endhost stack (scionproto/scion, v0.15.0+)
 
 - Post dispatcher-removal, a first-class endhost is minimal: **`scion-daemon`
