@@ -82,3 +82,34 @@ func TestAdvertisedNetsIPv6(t *testing.T) {
 		t.Errorf("advertisedNets = %v, want %v", got, want)
 	}
 }
+
+func TestNodeInfoLocalPrefixesBypass(t *testing.T) {
+	t.Setenv("SCION_LOCAL_PREFIXES", "10.0.0.0/24, 10.0.1.0/24")
+	t.Setenv("SCION_NODE_IP", "192.0.2.7")
+	info, err := nodeInfo(t.Context(), config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"10.0.0.0/24", "10.0.1.0/24"}; !reflect.DeepEqual(info.PodCIDRs, want) {
+		t.Errorf("PodCIDRs = %v, want %v", info.PodCIDRs, want)
+	}
+	if info.InternalIP != "192.0.2.7" {
+		t.Errorf("InternalIP = %q, want 192.0.2.7", info.InternalIP)
+	}
+}
+
+func TestNodeInfoLocalPrefixesInvalidIP(t *testing.T) {
+	t.Setenv("SCION_LOCAL_PREFIXES", "10.0.0.0/24")
+	t.Setenv("SCION_NODE_IP", "not-an-ip")
+	if _, err := nodeInfo(t.Context(), config.Config{}); err == nil {
+		t.Error("expected error for invalid SCION_NODE_IP")
+	}
+}
+
+func TestNodeInfoLocalPrefixesMissingIP(t *testing.T) {
+	t.Setenv("SCION_LOCAL_PREFIXES", "10.0.0.0/24")
+	t.Setenv("SCION_NODE_IP", "")
+	if _, err := nodeInfo(t.Context(), config.Config{}); err == nil {
+		t.Error("expected error when SCION_NODE_IP is unset")
+	}
+}

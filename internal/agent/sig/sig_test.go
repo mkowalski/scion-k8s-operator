@@ -47,3 +47,30 @@ func TestRunNilReloadTrigger(t *testing.T) {
 		t.Errorf("error %q does not mention nil ReloadTrigger guard", err)
 	}
 }
+
+func TestRunOnUpNotCalledOnConnectorFailure(t *testing.T) {
+	called := false
+	err := Run(context.Background(), Params{
+		ConfigDir:     t.TempDir(), // no topology.json → connector setup fails
+		ReloadTrigger: make(chan struct{}, 1),
+		OnUp:          func() { called = true },
+	})
+	if err == nil {
+		t.Fatal("expected error for missing topology.json")
+	}
+	if called {
+		t.Error("OnUp was called despite connector failure")
+	}
+}
+
+func TestRunNilOnUpTolerated(t *testing.T) {
+	// nil OnUp must not panic; the run still fails early on the missing
+	// topology, before OnUp would fire.
+	err := Run(context.Background(), Params{
+		ConfigDir:     t.TempDir(),
+		ReloadTrigger: make(chan struct{}, 1),
+	})
+	if err == nil {
+		t.Fatal("expected error for missing topology.json")
+	}
+}

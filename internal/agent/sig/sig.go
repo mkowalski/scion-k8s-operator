@@ -44,6 +44,14 @@ type Params struct {
 	// is created and the pages are not served anywhere (Task 11 wires this
 	// into the health server).
 	DebugMux *http.ServeMux
+	// OnUp, if non-nil, is called once after the standalone daemon
+	// connector is up and the gateway struct is constructed, immediately
+	// before the blocking gateway run. It gates readiness on construction
+	// (config/connector failures never fire it), but is still slightly
+	// optimistic: tunnel device creation and control-plane startup happen
+	// inside gateway.Gateway.Run, which offers no readiness callback.
+	// Full data-plane readiness would need upstream scion support.
+	OnUp func()
 }
 
 // addrs derives the control, data, and probe UDP addresses from the node
@@ -145,6 +153,9 @@ func Run(ctx context.Context, p Params) error {
 		HTTPServeMux:             debugMux,
 		Metrics:                  gateway.NewMetrics(localIA),
 		RpcConfig:                env.RPC{},
+	}
+	if p.OnUp != nil {
+		p.OnUp()
 	}
 	return gw.Run(ctx)
 }

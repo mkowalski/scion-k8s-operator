@@ -31,6 +31,9 @@ import (
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/sig"
 )
 
+// daemonAPIAddr is fixed by the spec: the sciond gRPC API is only exposed
+// on localhost at the standard sciond port (spec: EnableDaemonAPI serves
+// on 127.0.0.1:30255); it is deliberately not configurable.
 const daemonAPIAddr = "127.0.0.1:30255"
 
 func main() {
@@ -130,7 +133,6 @@ func run(log *slog.Logger) error {
 
 	g.Go(func() error {
 		log.Info("starting gateway", "tun", cfg.TunName)
-		h.SetReady(health.ComponentGateway, true)
 		defer h.SetReady(health.ComponentGateway, false)
 		return sig.Run(ctx, sig.Params{
 			ConfigDir:         confDir,
@@ -140,6 +142,9 @@ func run(log *slog.Logger) error {
 			NodeIP:            nodeIP,
 			ReloadTrigger:     reload,
 			DebugMux:          mux,
+			// Readiness flips only once the gateway is constructed (see
+			// sig.Params.OnUp for the remaining optimism caveat).
+			OnUp: func() { h.SetReady(health.ComponentGateway, true) },
 		})
 	})
 
