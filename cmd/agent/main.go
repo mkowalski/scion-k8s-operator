@@ -131,6 +131,11 @@ func run(log *slog.Logger) error {
 		}
 	})
 
+	// sigUp is closed once the gateway's standalone daemon connector is
+	// constructed. The connector (scionproto pkg/daemon/standalone.go)
+	// MustRegisters metrics that daemonapi.Run also registers; daemonapi
+	// registers tolerantly, so it must go second — gate it on the gateway.
+	sigUp := make(chan struct{})
 	g.Go(func() error {
 		log.Info("starting gateway", "tun", cfg.TunName)
 		defer h.SetReady(health.ComponentGateway, false)
@@ -144,12 +149,20 @@ func run(log *slog.Logger) error {
 			DebugMux:          mux,
 			// Readiness flips only once the gateway is constructed (see
 			// sig.Params.OnUp for the remaining optimism caveat).
-			OnUp: func() { h.SetReady(health.ComponentGateway, true) },
+			OnUp: func() {
+				h.SetReady(health.ComponentGateway, true)
+				close(sigUp)
+			},
 		})
 	})
 
 	if cfg.EnableDaemonAPI {
 		g.Go(func() error {
+			select {
+			case <-sigUp:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 			log.Info("starting daemon API", "addr", daemonAPIAddr)
 			return daemonapi.Run(ctx, confDir, cfg.StateDir, daemonAPIAddr)
 		})
