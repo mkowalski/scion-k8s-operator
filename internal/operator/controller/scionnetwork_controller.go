@@ -61,11 +61,25 @@ type ScionNetworkReconciler struct {
 	bootstrapHTTP *http.Client
 }
 
+// registrarFinalizer guards ScionNetwork deletion until the node SIG set
+// has been deregistered from the AS-side registrar.
+const registrarFinalizer = "scion.mkowalski.github.io/registrar-cleanup"
+
 func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	sn := &v1alpha1.ScionNetwork{}
 	if err := r.Get(ctx, req.NamespacedName, sn); err != nil {
 		// Not-found: dependents are garbage-collected via owner refs.
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if !sn.DeletionTimestamp.IsZero() {
+		return r.finalize(ctx, sn)
+	}
+	if !controllerutil.ContainsFinalizer(sn, registrarFinalizer) {
+		controllerutil.AddFinalizer(sn, registrarFinalizer)
+		if err := r.Update(ctx, sn); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	forbidden, err := r.clusterForbiddenCIDRs(ctx, sn)
@@ -106,6 +120,34 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// owned by the DaemonSet, not the ScionNetwork), so poll until
 		// fully available.
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// finalize deregisters all node SIGs from the AS-side registrar (an Ensure
+// with an empty set) and then removes the finalizer. Backend construction
+// failures (e.g. the credentials Secret was already deleted) drop the
+// finalizer anyway: blocking deletion forever on a lost secret is worse
+// than leaving stale registrar entries, which the AS side can garbage
+// collect. Ensure failures are retried.
+func (r *ScionNetworkReconciler) finalize(ctx context.Context, sn *v1alpha1.ScionNetwork) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(sn, registrarFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	backend, err := r.backendFor(ctx, sn)
+	if err != nil {
+		ctrl.LoggerFrom(ctx).Error(err,
+			"registrar backend unavailable during finalization; skipping deregistration")
+	} else {
+		ectx, cancel := context.WithTimeout(ctx, registrarTimeout)
+		defer cancel()
+		if err := backend.Ensure(ectx, nil); err != nil {
+			return ctrl.Result{}, fmt.Errorf("deregister SIGs: %w", err)
+		}
+	}
+	controllerutil.RemoveFinalizer(sn, registrarFinalizer)
+	if err := r.Update(ctx, sn); err != nil {
+		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
 }

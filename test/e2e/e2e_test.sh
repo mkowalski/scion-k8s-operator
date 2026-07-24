@@ -27,7 +27,7 @@ skip() { printf 'SKIP %s: %s\n' "$1" "$2"; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 dump_diagnostics() {
-    printf '--- diagnostics (best-effort) ---\n' >&2
+    printf '%s\n' '--- diagnostics (best-effort) ---' >&2
     oc -n "$NAMESPACE" get pods -o wide >&2 || true
     oc get scionnetwork cluster -o yaml 2>/dev/null | tail -40 >&2 || true
     oc -n "$NAMESPACE" get events --sort-by=.lastTimestamp 2>/dev/null | tail -20 >&2 || true

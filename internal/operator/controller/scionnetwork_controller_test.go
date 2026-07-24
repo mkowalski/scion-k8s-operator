@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -283,5 +284,50 @@ func TestApplyFailureSurfacesDegraded(t *testing.T) {
 	}
 	if !strings.Contains(cond.Message, "injected daemonset failure") {
 		t.Fatalf("Degraded message = %q, want to contain the error", cond.Message)
+	}
+}
+
+// TestFinalizerLifecycle checks (with the fake client) that reconcile adds
+// the registrar-cleanup finalizer, and that deletion deregisters the SIG
+// set (manual backend: no-op) and removes the finalizer so the object can
+// go away.
+func TestFinalizerLifecycle(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	sn := newScionNetwork()
+	c := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(sn).
+		WithStatusSubresource(&v1alpha1.ScionNetwork{}).
+		Build()
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme, AgentImage: testAgentImage}
+	req := reconcile.Request{NamespacedName: types.NamespacedName{Name: "cluster"}}
+
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	got := &v1alpha1.ScionNetwork{}
+	if err := c.Get(context.Background(), req.NamespacedName, got); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got.Finalizers, registrarFinalizer) {
+		t.Fatalf("finalizer not added: %v", got.Finalizers)
+	}
+
+	if err := c.Delete(context.Background(), got); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	// With the finalizer removed the fake client deletes the object.
+	err := c.Get(context.Background(), req.NamespacedName, &v1alpha1.ScionNetwork{})
+	if err == nil || !apierrors.IsNotFound(err) {
+		t.Fatalf("object still present after finalization: %v", err)
 	}
 }
