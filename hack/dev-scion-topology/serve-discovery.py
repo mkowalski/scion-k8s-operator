@@ -2,7 +2,7 @@
 """Minimal SCION discovery server for dev/test: serves an AS's topology.json
 and TRCs in the netsec-ethz/bootstrapper HTTP layout used by the agent."""
 import json, os, re, sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 GEN = sys.argv[1]          # e.g. .../scion/gen/ASff00_0_112
 TRCS = sys.argv[2]         # e.g. .../scion/gen/trcs
@@ -37,4 +37,4 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 if __name__ == "__main__":
-    HTTPServer(("", PORT), H).serve_forever()
+    ThreadingHTTPServer(("", PORT), H).serve_forever()
