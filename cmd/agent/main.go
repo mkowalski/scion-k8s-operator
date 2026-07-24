@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -144,7 +145,11 @@ func run(log *slog.Logger) error {
 	// constructed. The connector (scionproto pkg/daemon/standalone.go)
 	// MustRegisters metrics that daemonapi.Run also registers; daemonapi
 	// registers tolerantly, so it must go second — gate it on the gateway.
+	// TODO: this start-ordering gate is a workaround for scionproto's
+	// MustRegister on the global default registry; if upstream ever takes
+	// an injectable registry, the gate (and sigUp) can go away.
 	sigUp := make(chan struct{})
+	sigUpOnce := closeOnce(sigUp)
 	g.Go(func() error {
 		log.Info("starting gateway", "tun", cfg.TunName)
 		defer h.SetReady(health.ComponentGateway, false)
@@ -160,7 +165,7 @@ func run(log *slog.Logger) error {
 			// sig.Params.OnUp for the remaining optimism caveat).
 			OnUp: func() {
 				h.SetReady(health.ComponentGateway, true)
-				close(sigUp)
+				sigUpOnce()
 			},
 		})
 	})
@@ -297,4 +302,13 @@ func renderPolicies(in policy.Input, trafficFile, routingFile string) error {
 		return err
 	}
 	return os.WriteFile(routingFile, []byte(routing), 0o644)
+}
+
+// closeOnce returns a function that closes ch exactly once; further calls
+// are no-ops. The gateway's OnUp is documented to fire once, but readiness
+// callbacks are exactly the kind of contract that shifts across scionproto
+// bumps, and a double close of sigUp would panic the whole agent.
+func closeOnce(ch chan<- struct{}) func() {
+	var once sync.Once
+	return func() { once.Do(func() { close(ch) }) }
 }

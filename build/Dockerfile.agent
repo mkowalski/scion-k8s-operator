@@ -7,7 +7,9 @@ COPY . .
 RUN CGO_ENABLED=1 go build -o /agent ./cmd/agent
 
 FROM gcr.io/distroless/base-debian12
-# NET_ADMIN + /dev/net/tun are granted by the pod spec; binary itself is
-# capability-agnostic. Runs as root only when the SCC requires it for tun.
+# The binary is capability-agnostic; privileges come from the pod spec. The
+# agent currently runs privileged as root (see the render.go TODO): on
+# RHCOS, NET_ADMIN-only nonroot fails on SELinux hostPath/tun denials and
+# the root-owned state dir.
 COPY --from=build /agent /agent
 ENTRYPOINT ["/agent"]

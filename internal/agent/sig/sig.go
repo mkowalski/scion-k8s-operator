@@ -18,6 +18,7 @@ import (
 	"github.com/scionproto/scion/gateway"
 	"github.com/scionproto/scion/gateway/dataplane"
 	"github.com/scionproto/scion/pkg/daemon"
+	"github.com/scionproto/scion/pkg/log"
 	"github.com/scionproto/scion/pkg/private/serrors"
 	"github.com/scionproto/scion/pkg/snet/addrutil"
 	"github.com/scionproto/scion/private/env"
@@ -165,18 +166,45 @@ func Run(ctx context.Context, p Params) error {
 	// interfaces, so without this packets decapsulated onto the tun are
 	// never forwarded to pod interfaces (verified live: inbound frames
 	// reached scion0 but never ovn-k8s-mp0).
+	//
+	// Forwarding semantics: this affects the INGRESS direction only —
+	// remote→pod traffic decapsulated onto the tun must be forwarded off
+	// it toward the pod interface. Egress (pod→SCION) enters the tun via
+	// kernel routes programmed by the gateway and does not depend on the
+	// tun's forwarding sysctl.
 	go func() {
 		path := filepath.Join("/proc/sys/net/ipv4/conf", p.TunName, "forwarding")
-		for i := 0; i < 60; i++ {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Second):
-			}
-			if err := os.WriteFile(path, []byte("1"), 0o644); err == nil {
-				return
-			}
+		err := enableTunForwarding(ctx, path, 60, time.Second)
+		switch {
+		case err == nil:
+			log.Info("enabled IPv4 forwarding on tun device", "tun", p.TunName)
+		case ctx.Err() != nil:
+			// Shutting down; nothing to report.
+		default:
+			log.Error("FAILED to enable IPv4 forwarding on tun device; "+
+				"inbound SCION traffic will NOT reach pod interfaces",
+				"tun", p.TunName, "path", path, "err", err)
 		}
 	}()
 	return gw.Run(ctx)
+}
+
+// enableTunForwarding polls for the tun device's per-interface forwarding
+// sysctl (the device is created asynchronously inside gateway.Run) and
+// writes "1" to it. It retries up to attempts times, waiting delay before
+// each try, and returns nil on success, ctx.Err() on cancellation, or the
+// last write error once attempts are exhausted.
+func enableTunForwarding(ctx context.Context, path string, attempts int, delay time.Duration) error {
+	var last error
+	for i := 0; i < attempts; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		if last = os.WriteFile(path, []byte("1"), 0o644); last == nil {
+			return nil
+		}
+	}
+	return serrors.Wrap("enabling tun forwarding after retries exhausted", last, "attempts", attempts)
 }

@@ -150,20 +150,15 @@ func Run(ctx context.Context, configDir, stateDir, listenAddr string) (err error
 	// trustengine_db_queries_total counter on the default registry;
 	// MustRegister here would panic with a duplicate-registration error.
 	// Register tolerantly and reuse the existing collector.
-	queriesTotal := prometheus.NewCounterVec(
+	queriesTotal, rerr := registerOrReuse(prometheus.DefaultRegisterer, prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "trustengine_db_queries_total",
 			Help: "Total queries to the database",
 		},
 		[]string{"driver", "operation", prom.LabelResult},
-	)
-	if rerr := prometheus.Register(queriesTotal); rerr != nil {
-		already := prometheus.AlreadyRegisteredError{}
-		if errors.As(rerr, &already) {
-			queriesTotal = already.ExistingCollector.(*prometheus.CounterVec)
-		} else {
-			return serrors.Wrap("registering trust DB metrics", rerr)
-		}
+	))
+	if rerr != nil {
+		return serrors.Wrap("registering trust DB metrics", rerr)
 	}
 	trustDB = truststoragemetrics.WrapDB(trustDB, truststoragemetrics.Config{
 		Driver:       string(storage.BackendSqlite),
@@ -279,6 +274,23 @@ func Run(ctx context.Context, configDir, stateDir, listenAddr string) (err error
 	})
 
 	return g.Wait()
+}
+
+// registerOrReuse registers c on reg; if an equivalent collector is
+// already registered (prometheus.AlreadyRegisteredError), the existing
+// collector is returned instead. Any other registration error is returned
+// as-is. This makes duplicate registration against the process-global
+// default registry tolerable when scionproto components register the same
+// metric (e.g. the standalone daemon connector vs this daemon API).
+func registerOrReuse[C prometheus.Collector](reg prometheus.Registerer, c C) (C, error) {
+	if err := reg.Register(c); err != nil {
+		already := prometheus.AlreadyRegisteredError{}
+		if errors.As(err, &already) {
+			return already.ExistingCollector.(C), nil
+		}
+		return c, err
+	}
+	return c, nil
 }
 
 // loaderMetrics is ported verbatim from upstream main.go.

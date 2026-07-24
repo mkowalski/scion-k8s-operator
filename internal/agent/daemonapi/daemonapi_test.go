@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestRunMissingTopology(t *testing.T) {
@@ -55,5 +57,41 @@ func TestRunSmoke(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run did not shut down after cancel")
+	}
+}
+
+// TestRegisterOrReuse covers the duplicate-registration tolerance: the
+// second registration of an equivalent collector must not fail and must
+// hand back the collector that was registered first, so both callers
+// increment the same time series.
+func TestRegisterOrReuse(t *testing.T) {
+	newVec := func() *prometheus.CounterVec {
+		return prometheus.NewCounterVec(
+			prometheus.CounterOpts{Name: "test_queries_total", Help: "h"},
+			[]string{"op"},
+		)
+	}
+	reg := prometheus.NewRegistry()
+
+	first, err := registerOrReuse(reg, newVec())
+	if err != nil {
+		t.Fatalf("first registration: %v", err)
+	}
+	second, err := registerOrReuse(reg, newVec())
+	if err != nil {
+		t.Fatalf("duplicate registration: %v", err)
+	}
+	if first != second {
+		t.Fatal("duplicate registration did not reuse the existing collector")
+	}
+
+	// A genuinely conflicting collector (same name, different labels) is
+	// not an AlreadyRegisteredError and must surface as an error.
+	conflicting := prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "test_queries_total", Help: "h"},
+		[]string{"other"},
+	)
+	if _, err := registerOrReuse(reg, conflicting); err == nil {
+		t.Fatal("conflicting collector registration must fail")
 	}
 }
