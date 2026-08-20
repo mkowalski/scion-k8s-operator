@@ -53,6 +53,20 @@ keeps the AS-side gateway registration in sync as nodes come and go:
 
 <img src="drawings/scion-architecture.svg" alt="Component architecture" style="width: 90%; max-width: 800px;">
 
+### Planned OVN-Kubernetes pod-egress path
+
+OVN-Kubernetes shared-gateway mode bypasses host routes, so the planned
+integration requires `routingViaHost: true`. The operator will allocate a
+stable SCION egress `/32` to every selected node; the agent will assign it to
+`scion0`, advertise it through SGRP, and source-NAT only pod traffic whose
+kernel route already points at `scion0`. The operator will not modify `br-ex`
+or the OVN database.
+
+<img src="drawings/ovn-scion-traffic.svg" alt="OVN-Kubernetes pod traffic routed through a per-node SCION egress IP" style="width: 95%; max-width: 900px;">
+
+This path is not implemented yet. See the
+[implementation plan](docs/superpowers/plans/2026-08-20-ovn-local-gateway-egress.md).
+
 ## Quick start
 
 ```bash
