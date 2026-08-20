@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -89,6 +90,11 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		r.markApplyFailed(ctx, sn, err)
 		return ctrl.Result{}, err
 	}
+	platform, err := r.detectPodEgressPlatform(ctx)
+	if err != nil {
+		r.markApplyFailed(ctx, sn, err)
+		return ctrl.Result{}, err
+	}
 	image := sn.Spec.AgentImage
 	if image == "" {
 		image = r.AgentImage
@@ -107,7 +113,7 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	r.discoverISDAS(ctx, sn)
 
-	available, err := r.updateStatus(ctx, sn, regStatus, regFailed)
+	available, err := r.updateStatus(ctx, sn, regStatus, regFailed, platform)
 	if err != nil {
 		if apierrors.IsConflict(err) {
 			return ctrl.Result{Requeue: true}, nil
@@ -339,12 +345,25 @@ func (r *ScionNetworkReconciler) applyObjectNoOwner(ctx context.Context, obj cli
 	return err
 }
 
-// clusterForbiddenCIDRs merges spec.acceptPolicy.forbiddenCIDRs with the
-// cluster's pod and service networks read from the OpenShift
-// network.config.openshift.io "cluster" object. On vanilla Kubernetes the
-// GET fails with NotFound or NoMatch and spec values are used as-is.
+// clusterForbiddenCIDRs merges IPv4 entries from
+// spec.acceptPolicy.{forbiddenCIDRs,underlayCIDRs} with the cluster's IPv4 pod
+// and service networks read from the OpenShift
+// network.config.openshift.io "cluster" object. The agent policy engine is
+// IPv4-only; dual-stack clusters therefore contribute only their IPv4 ranges.
+// On vanilla Kubernetes the GET fails with NotFound or NoMatch and spec values
+// are used as-is.
 func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *v1alpha1.ScionNetwork) ([]string, error) {
-	out := append([]string{}, sn.Spec.AcceptPolicy.ForbiddenCIDRs...)
+	var out []string
+	for _, cidr := range sn.Spec.AcceptPolicy.ForbiddenCIDRs {
+		if isIPv4CIDR(cidr) {
+			out = append(out, cidr)
+		}
+	}
+	for _, cidr := range sn.Spec.AcceptPolicy.UnderlayCIDRs {
+		if isIPv4CIDR(cidr) {
+			out = append(out, cidr)
+		}
+	}
 
 	nc := &unstructured.Unstructured{}
 	nc.SetGroupVersionKind(schema.GroupVersionKind{
@@ -356,19 +375,28 @@ func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *
 		cns, _, _ := unstructured.NestedSlice(nc.Object, "spec", "clusterNetwork")
 		for _, cn := range cns {
 			if m, ok := cn.(map[string]interface{}); ok {
-				if cidr, ok := m["cidr"].(string); ok && cidr != "" {
+				if cidr, ok := m["cidr"].(string); ok && isIPv4CIDR(cidr) {
 					out = append(out, cidr)
 				}
 			}
 		}
 		svc, _, _ := unstructured.NestedStringSlice(nc.Object, "spec", "serviceNetwork")
-		out = append(out, svc...)
+		for _, cidr := range svc {
+			if isIPv4CIDR(cidr) {
+				out = append(out, cidr)
+			}
+		}
 	case apierrors.IsNotFound(err) || meta.IsNoMatchError(err):
 		// Vanilla Kubernetes: no OpenShift network config.
 	default:
 		return nil, fmt.Errorf("read openshift network config: %w", err)
 	}
 	return dedupe(out), nil
+}
+
+func isIPv4CIDR(cidr string) bool {
+	prefix, err := netip.ParsePrefix(cidr)
+	return err == nil && prefix.Addr().Is4()
 }
 
 func dedupe(in []string) []string {
@@ -381,13 +409,15 @@ func dedupe(in []string) []string {
 	return out
 }
 
-// updateStatus aggregates agent pod readiness into status.nodes and the
-// Available/Progressing/Degraded conditions, and persists the registrar
-// status computed by syncRegistrar — one status write per reconcile. A
-// registrar failure marks Degraded (reason RegistrarSyncFailed) only for
-// non-manual backends; manual mode cannot fail. Returns whether the
-// ScionNetwork is fully available.
-func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.ScionNetwork, reg v1alpha1.RegistrarStatus, regFailed bool) (bool, error) {
+// updateStatus aggregates agent readiness, the platform routing prerequisite,
+// and registrar state. Returns whether the complete service is available.
+func (r *ScionNetworkReconciler) updateStatus(
+	ctx context.Context,
+	sn *v1alpha1.ScionNetwork,
+	reg v1alpha1.RegistrarStatus,
+	regFailed bool,
+	platform podEgressPlatform,
+) (bool, error) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods,
 		client.InNamespace(render.Namespace),
@@ -425,11 +455,12 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 		total = ds.Status.DesiredNumberScheduled
 	}
 
-	available := total > 0 && ready == total
+	agentsAvailable := total > 0 && ready == total
+	available := agentsAvailable && platform.Status != metav1.ConditionFalse
 	progressing := !dsCurrent || total == 0 || ready < total
 	// TODO: refine Degraded to "pod unready for >5m" once pod transition
 	// timestamps are tracked; for now any unready pod marks Degraded.
-	isDegraded, reason := degradedReason(ready, total, regFailed, sn.Spec.Registrar.Backend)
+	isDegraded, reason := degradedReason(ready, total, platform, regFailed, sn.Spec.Registrar.Backend)
 
 	sn.Status.Nodes = v1alpha1.NodeSummary{Ready: ready, Total: total, Degraded: degraded}
 	sn.Status.Registrar = reg
@@ -443,13 +474,21 @@ func (r *ScionNetworkReconciler) updateStatus(ctx context.Context, sn *v1alpha1.
 			ObservedGeneration: sn.Generation,
 		})
 	}
-	setCond("Available", available, "NodeAgents",
-		fmt.Sprintf("%d/%d node agents ready", ready, total))
+	availableReason := "NodeAgents"
+	availableMessage := fmt.Sprintf("%d/%d node agents ready", ready, total)
+	if agentsAvailable && platform.Status == metav1.ConditionFalse {
+		availableReason = platform.Reason
+		availableMessage = platform.Message
+	}
+	setCond("Available", available, availableReason, availableMessage)
 	setCond("Progressing", progressing, "Rollout",
 		fmt.Sprintf("%d/%d node agents ready", ready, total))
 	degradedMsg := fmt.Sprintf("unready nodes: %v", degraded)
-	if reason == "RegistrarSyncFailed" {
+	switch reason {
+	case "RegistrarSyncFailed":
 		degradedMsg = reg.LastError
+	case "HostRoutingDisabled", "SourcePreservationDisabled":
+		degradedMsg = platform.Message
 	}
 	setCond("Degraded", isDegraded, reason, degradedMsg)
 
@@ -476,18 +515,29 @@ func podReady(p *corev1.Pod) bool {
 }
 
 // SetupWithManager registers the controller: reconciles the singleton on
-// ScionNetwork and owned-DaemonSet changes, and re-enqueues "cluster" on
-// Node events (node add/remove changes the desired agent set). Agent pod
-// readiness is not watched directly (pods are owned by the DaemonSet);
-// Reconcile requeues every 30s until fully available instead.
+// ScionNetwork and owned-DaemonSet changes, and re-enqueues "cluster" on Node
+// events and on the optional OpenShift routing APIs when they are discoverable.
+// Agent pod readiness is not watched directly (pods are owned by the
+// DaemonSet); Reconcile requeues every 30s until fully available instead.
 func (r *ScionNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	enqueueCluster := handler.EnqueueRequestsFromMapFunc(
 		func(ctx context.Context, _ client.Object) []ctrl.Request {
 			return []ctrl.Request{{NamespacedName: types.NamespacedName{Name: "cluster"}}}
 		})
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.ScionNetwork{}).
 		Owns(&appsv1.DaemonSet{}).
-		Watches(&corev1.Node{}, enqueueCluster).
-		Complete(r)
+		Watches(&corev1.Node{}, enqueueCluster)
+
+	optionalWatch := func(group, version, kind string) {
+		if _, err := mgr.GetRESTMapper().RESTMapping(schema.GroupKind{Group: group, Kind: kind}, version); err != nil {
+			return
+		}
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(schema.GroupVersionKind{Group: group, Version: version, Kind: kind})
+		builder.Watches(obj, enqueueCluster)
+	}
+	optionalWatch("operator.openshift.io", "v1", "Network")
+	optionalWatch("k8s.ovn.org", "v1", "RouteAdvertisements")
+	return builder.Complete(r)
 }

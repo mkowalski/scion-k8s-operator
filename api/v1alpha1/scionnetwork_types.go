@@ -48,12 +48,17 @@ type AcceptPolicySpec struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Pattern=`^\d+-([0-9a-fA-F_:]+|\d+)$`
 	ISDASes []string `json:"isdASes"`
-	// ForbiddenCIDRs are never accepted from remotes; the operator always
-	// appends clusterNetwork/serviceNetwork automatically. IPv4-only is
-	// intentional: the policy engine rejects IPv6 prefixes by design.
+	// ForbiddenCIDRs are never accepted from remotes; the operator appends
+	// clusterNetwork/serviceNetwork IPv4 ranges automatically. IPv6 ranges
+	// are ignored because the policy engine is IPv4-only.
 	// +optional
 	// +kubebuilder:validation:items:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$`
 	ForbiddenCIDRs []string `json:"forbiddenCIDRs,omitempty"`
+	// UnderlayCIDRs are never accepted from remotes and keep cluster-to-AS
+	// transport reachable outside the SCION tunnel.
+	// +optional
+	// +kubebuilder:validation:items:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$`
+	UnderlayCIDRs []string `json:"underlayCIDRs,omitempty"`
 }
 
 // DataplaneSpec configures the node-local SCION dataplane.

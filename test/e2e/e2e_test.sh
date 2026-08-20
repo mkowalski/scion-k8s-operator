@@ -10,6 +10,8 @@ NAMESPACE=scion-system
 OPERATOR_DEPLOY=scion-operator
 AGENT_DS=scion-node-agent
 TUN_NAME=${TUN_NAME:-scion0}
+REMOTE_TCP_PORT=${REMOTE_TCP_PORT:-18080}
+NON_SCION_IP=${NON_SCION_IP:-1.1.1.1}
 # fedora-toolbox ships iputils ping that works unprivileged (ICMP datagram
 # sockets); ubi-minimal/ubi/fedora base images have no ping, busybox ping
 # needs raw sockets. Verified locally with podman.
@@ -59,10 +61,12 @@ Required environment (phase-dependent):
   REGISTRAR_URL    registrar base URL, e.g. http://as-host:8642  (configure, assert_registration, churn, undeploy)
   REGISTRAR_TOKEN  registrar bearer token              (configure, assert_registration, churn, undeploy)
   REMOTE_PING_IP   IP behind the remote SIG to ping    (assert_dataplane)
+  UNDERLAY_CIDR    Cluster-to-AS transport CIDR         (configure; default: 192.168.111.0/24)
+  REMOTE_SSH       SSH destination for the AS host     (assert_dataplane)
 
 Optional:
-  REMOTE_SSH       ssh destination on the remote side for the inbound
-                   ping check (e.g. user@as-host); skipped if unset
+  REMOTE_TCP_PORT  Remote SCION TCP test port (default: $REMOTE_TCP_PORT)
+  NON_SCION_IP     Control destination that must avoid scion0 (default: $NON_SCION_IP)
   TEST_IMAGE       test pod image (default: $TEST_IMAGE)
   TUN_NAME         tun device name (default: scion0)
   PHASES           space-separated subset of phases to run
@@ -94,6 +98,54 @@ node_has_tun() {
     oc debug "node/$node" -q -- chroot /host ip link show "$TUN_NAME"
 }
 
+node_ipv4() {
+    local node=$1 address
+    while IFS= read -r address; do
+        case "$address" in
+            *.*) printf '%s\n' "$address"; return 0 ;;
+        esac
+    done < <(oc get node "$node" -o jsonpath='{range .status.addresses[?(@.type=="InternalIP")]}{.address}{"\n"}{end}')
+    die "node $node has no IPv4 InternalIP"
+}
+
+route_source() {
+    local route=$1 token want_next=0
+    for token in $route; do
+        if [ "$want_next" -eq 1 ]; then
+            printf '%s\n' "$token"
+            return 0
+        fi
+        [ "$token" = "src" ] && want_next=1
+    done
+    die "route has no source address: $route"
+}
+
+remote_exec() {
+    if [ "$REMOTE_SSH" = "local" ]; then
+        "$@"
+    else
+        # shellcheck disable=SC2029 # arguments intentionally expand locally
+        ssh "$REMOTE_SSH" "$@"
+    fi
+}
+
+require_source_preserving_host_routing() {
+    local routing advertisements routes
+    routing=$(oc get network.operator.openshift.io cluster \
+        -o jsonpath='{.spec.defaultNetwork.ovnKubernetesConfig.gatewayConfig.routingViaHost}')
+    [ "$routing" = "true" ] || \
+        die 'OVN-K routingViaHost must be true; set it explicitly with: oc patch network.operator cluster --type=merge -p '\''{"spec":{"defaultNetwork":{"ovnKubernetesConfig":{"gatewayConfig":{"routingViaHost":true}}}}}'\'''
+
+    advertisements=$(oc get network.operator.openshift.io cluster \
+        -o jsonpath='{.spec.defaultNetwork.ovnKubernetesConfig.routeAdvertisements}')
+    [ "$advertisements" = "Enabled" ] || \
+        die "OVN-K routeAdvertisements is '$advertisements', want Enabled for source preservation"
+
+    routes=$(oc get routeadvertisements.k8s.ovn.org -o jsonpath='{range .items[?(@.status.status=="Accepted")]}{.spec.advertisements}{" "}{.spec.networkSelectors[*].networkSelectionType}{"\n"}{end}')
+    printf '%s\n' "$routes" | grep -q 'PodNetwork.*DefaultNetwork' || \
+        die "no accepted default-network PodNetwork RouteAdvertisements resource"
+}
+
 registrar_sigs() {
     curl -fsS -H "Authorization: Bearer $REGISTRAR_TOKEN" "$REGISTRAR_URL/v1/sigs"
 }
@@ -111,6 +163,26 @@ wait_agents_ready() {
         fi
         if [ "$waited" -ge "$timeout" ]; then
             die "DaemonSet $AGENT_DS not ready after ${timeout}s (desired=$desired ready=$ready)"
+        fi
+        sleep 10
+        waited=$((waited + 10))
+    done
+}
+
+wait_agent_replaced() {
+    local node=$1 old_uid=$2 timeout=${3:-600} waited=0 pod uid ready
+    while true; do
+        pod=$(oc -n "$NAMESPACE" get pods -l app="$AGENT_DS" \
+            --field-selector "spec.nodeName=$node" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+        if [ -n "$pod" ]; then
+            uid=$(oc -n "$NAMESPACE" get pod "$pod" -o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+            ready=$(oc -n "$NAMESPACE" get pod "$pod" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
+            if [ -n "$uid" ] && [ "$uid" != "$old_uid" ] && [ "$ready" = "True" ]; then
+                return 0
+            fi
+        fi
+        if [ "$waited" -ge "$timeout" ]; then
+            die "agent on $node was not replaced and Ready after ${timeout}s"
         fi
         sleep 10
         waited=$((waited + 10))
@@ -141,6 +213,7 @@ deploy() {
 }
 
 configure() {
+    require_source_preserving_host_routing
     require_env DISCOVERY_URL REMOTE_ISD_AS REGISTRAR_URL REGISTRAR_TOKEN
     oc -n "$NAMESPACE" create secret generic scion-registrar-token \
         --from-literal=token="$REGISTRAR_TOKEN" \
@@ -157,11 +230,13 @@ spec:
   acceptPolicy:
     isdASes:
       - "$REMOTE_ISD_AS"
-  # Node IPs share the NIC that carries the SCION underlay in this test
-  # topology. Advertising them makes the remote side route all traffic to
-  # the nodes -- including the SCION underlay itself -- through the SIG
-  # tunnel, creating a routing loop that blackholes probe replies and
-  # control-plane discovery. Advertise pod CIDRs only.
+    # Node IPs share the NIC that carries the SCION underlay in this test
+    # topology. Advertising them makes the remote side route all traffic to
+    # the nodes -- including the SCION underlay itself -- through the SIG
+    # tunnel, creating a routing loop that blackholes probes, discovery, and
+    # registrar traffic. Exclude the underlay and advertise pod CIDRs only.
+    underlayCIDRs:
+      - "${UNDERLAY_CIDR:-192.168.111.0/24}"
   advertisement:
     podCIDR: true
     nodeIP: false
@@ -176,19 +251,17 @@ EOF
 
 assert_agents() {
     wait_agents_ready 600
-    local avail
-    avail=$(oc get scionnetwork cluster \
-        -o jsonpath='{.status.conditions[?(@.type=="Available")].status}')
-    [ "$avail" = "True" ] || die "ScionNetwork Available condition is '$avail', want True"
+    oc wait scionnetwork/cluster --for=condition=Available=True --timeout=5m
+    local degraded
+    degraded=$(oc get scionnetwork cluster \
+        -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}')
+    [ "$degraded" = "False" ] || die "ScionNetwork Degraded condition is '$degraded', want False"
     ok assert_agents
 }
 
 assert_dataplane() {
-    require_env REMOTE_PING_IP
-    local node
-    node=$(first_node)
-    log "checking $TUN_NAME on node $node"
-    node_has_tun "$node"
+    require_env REMOTE_PING_IP REMOTE_SSH
+    require_source_preserving_host_routing
 
     log "launching test pod $TEST_POD ($TEST_IMAGE)"
     oc -n "$NAMESPACE" delete pod "$TEST_POD" --ignore-not-found
@@ -196,20 +269,67 @@ assert_dataplane() {
         --restart=Never --command -- sleep 3600
     oc -n "$NAMESPACE" wait --for=condition=Ready --timeout=5m "pod/$TEST_POD"
 
-    log "outbound: ping $REMOTE_PING_IP from test pod"
-    oc -n "$NAMESPACE" exec "$TEST_POD" -- ping -c 3 -W 5 "$REMOTE_PING_IP"
+    local node node_ip host_source pod_ip route normal_route underlay_route capture capture_pid
+    node=$(oc -n "$NAMESPACE" get pod "$TEST_POD" -o jsonpath='{.spec.nodeName}')
+    pod_ip=$(oc -n "$NAMESPACE" get pod "$TEST_POD" -o jsonpath='{.status.podIP}')
 
-    if [ -n "${REMOTE_SSH:-}" ]; then
-        local pod_ip
-        pod_ip=$(oc -n "$NAMESPACE" get pod "$TEST_POD" -o jsonpath='{.status.podIP}')
-        log "inbound: ping $pod_ip from $REMOTE_SSH"
-        # Source from the remote SIG-side address: the remote host is
-        # multihomed and default source selection picks a non-SCION
-        # interface, so replies would never route back through the SIG.
-        ssh "$REMOTE_SSH" ping -c 3 -W 5 -I "$REMOTE_PING_IP" "$pod_ip"
-    else
-        skip "assert_dataplane(inbound)" "REMOTE_SSH not set; inbound path not verified"
+    log "checking learned route to $REMOTE_PING_IP on node $node"
+    node_has_tun "$node"
+    route=$(oc debug "node/$node" -q -- chroot /host ip -4 route get "$REMOTE_PING_IP")
+    printf '%s\n' "$route" | grep -Eq "dev $TUN_NAME([[:space:]]|$)" || \
+        die "route to $REMOTE_PING_IP does not select $TUN_NAME: $route"
+    host_source=$(route_source "$route")
+    if oc debug "node/$node" -q -- chroot /host nft list table inet scion-node-agent >/dev/null 2>&1; then
+        die "unexpected scion-node-agent nftables table on $node"
     fi
+
+    normal_route=$(oc debug "node/$node" -q -- chroot /host ip -4 route get "$NON_SCION_IP")
+    if printf '%s\n' "$normal_route" | grep -Eq "dev $TUN_NAME([[:space:]]|$)"; then
+        die "non-SCION destination $NON_SCION_IP unexpectedly selects $TUN_NAME: $normal_route"
+    fi
+    node_ip=$(node_ipv4 "$node")
+    underlay_route=$(oc -n "$NAMESPACE" exec "$TEST_POD" -- ip -4 route get "$node_ip")
+    if printf '%s\n' "$underlay_route" | grep -Eq "dev $TUN_NAME([[:space:]]|$)"; then
+        die "cluster underlay destination $node_ip unexpectedly selects $TUN_NAME: $underlay_route"
+    fi
+    log "checking remote underlay-bypass guard"
+
+    log "outbound over SCION with pod source $pod_ip"
+    capture=$(mktemp)
+    remote_exec sudo timeout 20 tcpdump -l -n -i sigb -c 1 \
+        icmp and src host "$pod_ip" and dst host "$REMOTE_PING_IP" >"$capture" 2>&1 &
+    capture_pid=$!
+    sleep 2
+    oc -n "$NAMESPACE" exec "$TEST_POD" -- ping -c 3 -W 5 "$REMOTE_PING_IP"
+    if ! wait "$capture_pid"; then
+        cat "$capture" >&2
+        rm -f "$capture"
+        die "remote SIG did not observe inner ICMP from pod source $pod_ip"
+    fi
+    grep -Fq "$pod_ip" "$capture" || { cat "$capture" >&2; rm -f "$capture"; die "capture lacks pod source $pod_ip"; }
+    rm -f "$capture"
+
+    log "outbound TCP over SCION"
+    oc -n "$NAMESPACE" exec "$TEST_POD" -- \
+        curl -fsS --connect-timeout 5 "http://$REMOTE_PING_IP:$REMOTE_TCP_PORT/" >/dev/null
+
+    log "host-originated packet retains route-selected source $host_source"
+    capture=$(mktemp)
+    remote_exec sudo timeout 20 tcpdump -l -n -i sigb -c 1 \
+        icmp and src host "$host_source" and dst host "$REMOTE_PING_IP" >"$capture" 2>&1 &
+    capture_pid=$!
+    sleep 2
+    oc debug "node/$node" -q -- chroot /host ping -c 1 -W 2 "$REMOTE_PING_IP" >/dev/null
+    if ! wait "$capture_pid"; then
+        cat "$capture" >&2
+        rm -f "$capture"
+        die "remote SIG did not observe host packet from source $host_source"
+    fi
+    grep -Fq "$host_source" "$capture" || { cat "$capture" >&2; rm -f "$capture"; die "capture lacks host source $host_source"; }
+    rm -f "$capture"
+
+    log "inbound over SCION: ping $pod_ip from $REMOTE_SSH"
+    remote_exec ping -c 3 -W 5 -I "$REMOTE_PING_IP" "$pod_ip"
 
     oc -n "$NAMESPACE" delete pod "$TEST_POD" --ignore-not-found
     ok assert_dataplane
@@ -222,23 +342,26 @@ assert_registration() {
 }
 
 churn() {
-    require_env REGISTRAR_URL REGISTRAR_TOKEN
-    local victim node
+    require_env REGISTRAR_URL REGISTRAR_TOKEN REMOTE_PING_IP
+    local victim node old_uid
     victim=$(oc -n "$NAMESPACE" get pods -l app="$AGENT_DS" \
         -o jsonpath='{.items[0].metadata.name}')
     node=$(oc -n "$NAMESPACE" get pod "$victim" -o jsonpath='{.spec.nodeName}')
+    old_uid=$(oc -n "$NAMESPACE" get pod "$victim" -o jsonpath='{.metadata.uid}')
     log "deleting agent pod $victim (node $node)"
     oc -n "$NAMESPACE" delete pod "$victim" --wait=true
+    wait_agent_replaced "$node" "$old_uid" 600
     wait_agents_ready 600
     check_registration
-    log "re-checking $TUN_NAME on node $node"
+    log "re-checking learned route on $node"
     node_has_tun "$node"
+    oc debug "node/$node" -q -- chroot /host ip -4 route get "$REMOTE_PING_IP" | grep -Eq "dev $TUN_NAME([[:space:]]|$)"
     ok churn
 }
 
 undeploy() {
-    require_env REGISTRAR_URL REGISTRAR_TOKEN
-    local node
+    require_env REGISTRAR_URL REGISTRAR_TOKEN REMOTE_PING_IP
+    local node route
     node=$(first_node)
     oc delete scionnetwork cluster --ignore-not-found --wait=true
     log "waiting for DaemonSet $AGENT_DS to disappear"
@@ -260,6 +383,10 @@ undeploy() {
     log "checking $TUN_NAME is gone on node $node"
     if node_has_tun "$node" >/dev/null 2>&1; then
         die "$TUN_NAME still present on node $node after undeploy"
+    fi
+    route=$(oc debug "node/$node" -q -- chroot /host ip -4 route get "$REMOTE_PING_IP" 2>/dev/null || true)
+    if printf '%s\n' "$route" | grep -Eq "dev $TUN_NAME([[:space:]]|$)"; then
+        die "route to $REMOTE_PING_IP still selects $TUN_NAME after undeploy: $route"
     fi
     if [ "${KEEP_OPERATOR:-0}" != "1" ]; then
         oc delete -k config/manifests

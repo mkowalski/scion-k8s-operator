@@ -18,7 +18,7 @@ type HTTP struct {
 	Endpoint string
 	// Token is sent as "Authorization: Bearer <Token>".
 	Token string
-	// Client is optional; when nil, a client with a 10s timeout is used.
+	// Client is optional; when nil, a client with a 45s timeout is used.
 	Client *http.Client
 }
 
@@ -41,9 +41,10 @@ func (h *HTTP) Ensure(ctx context.Context, sigs []SIG) error {
 
 	c := h.Client
 	if c == nil {
-		// Never the timeout-less http.DefaultClient: a hung AS endpoint
-		// must not block callers beyond this bound (Ensure ctx aside).
-		c = &http.Client{Timeout: 10 * time.Second}
+		// The registrar may spend up to 30s running its topology reload command.
+		// Leave headroom for request handling so a valid reload cannot strand
+		// subsequent PUTs behind the registrar's serialization lock.
+		c = &http.Client{Timeout: 45 * time.Second}
 	}
 	resp, err := c.Do(req)
 	if err != nil {

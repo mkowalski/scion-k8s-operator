@@ -52,9 +52,9 @@ spec:
                 properties:
                   forbiddenCIDRs:
                     description: |-
-                      ForbiddenCIDRs are never accepted from remotes; the operator always
-                      appends clusterNetwork/serviceNetwork automatically. IPv4-only is
-                      intentional: the policy engine rejects IPv6 prefixes by design.
+                      ForbiddenCIDRs are never accepted from remotes; the operator appends
+                      clusterNetwork/serviceNetwork IPv4 ranges automatically. IPv6 ranges
+                      are ignored because the policy engine is IPv4-only.
                     items:
                       pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
                       type: string
@@ -66,6 +66,14 @@ spec:
                       pattern: ^\d+-([0-9a-fA-F_:]+|\d+)$
                       type: string
                     minItems: 1
+                    type: array
+                  underlayCIDRs:
+                    description: |-
+                      UnderlayCIDRs are never accepted from remotes and keep cluster-to-AS
+                      transport reachable outside the SCION tunnel.
+                    items:
+                      pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
+                      type: string
                     type: array
                 required:
                 - isdASes

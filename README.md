@@ -13,9 +13,9 @@ bidirectional SCION connectivity to unmodified workloads.
 
 scion-k8s-operator gives any workload — pods and host processes alike —
 connectivity to remote SCION networks with zero application changes. Egress
-to remote SCION prefixes is steered through a per-node tun device; inbound
-traffic reaches pod and node IPs because every node advertises its own pod
-CIDR and node IP into the SCION AS.
+to remote SCION prefixes is steered through a per-node tun device. Inbound
+traffic reaches pod CIDRs advertised by each node and, where safe and enabled,
+explicitly advertised node IPs.
 
 Behaving as a per-node SCION-IP gateway, the integration is seamless,
 exactly as if a physical SCION gateway appliance was moved inside the node.
@@ -53,19 +53,21 @@ keeps the AS-side gateway registration in sync as nodes come and go:
 
 <img src="drawings/scion-architecture.svg" alt="Component architecture" style="width: 90%; max-width: 800px;">
 
-### Planned OVN-Kubernetes pod-egress path
+### OVN-Kubernetes pod-egress path
 
-OVN-Kubernetes shared-gateway mode bypasses host routes, so the planned
-integration requires `routingViaHost: true`. The operator will allocate a
-stable SCION egress `/32` to every selected node; the agent will assign it to
-`scion0`, advertise it through SGRP, and source-NAT only pod traffic whose
-kernel route already points at `scion0`. The operator will not modify `br-ex`
-or the OVN database.
+OVN-Kubernetes shared-gateway mode bypasses host routes. Transparent pod
+egress therefore requires `routingViaHost: true`, and preserving pod source
+addresses requires OVN route advertisements for the default pod network.
+After OVN hands a packet to the host, only a route learned through SGRP can
+select `scion0`; all other destinations retain their normal route. Configure
+`acceptPolicy.underlayCIDRs` for every node-to-AS transport network so SCION
+control, discovery, and registrar traffic cannot recursively enter the tunnel.
+The agent does not perform SNAT and does not modify `br-ex` or the OVN database.
 
-<img src="drawings/ovn-scion-traffic.svg" alt="OVN-Kubernetes pod traffic routed through a per-node SCION egress IP" style="width: 95%; max-width: 900px;">
+<img src="drawings/ovn-scion-traffic.svg" alt="OVN-Kubernetes pod traffic routed by learned prefixes through the node-local SCION tunnel without source NAT" style="width: 95%; max-width: 900px;">
 
-This path is not implemented yet. See the
-[implementation plan](docs/superpowers/plans/2026-08-20-ovn-local-gateway-egress.md).
+This source-preserving path passed the hardened live OpenShift e2e suite on
+2026-08-20. See the [implementation plan](docs/superpowers/plans/2026-08-20-ovn-local-gateway-egress.md).
 
 ## Quick start
 

@@ -15,6 +15,27 @@ the only things nodes need reachability to:
 - the discovery server (default port 8041) reachable from nodes for
   bootstrap.
 
+On OpenShift with OVN-Kubernetes, transparent source-preserving pod egress has
+two platform prerequisites:
+
+1. `routingViaHost: true`, so pod egress enters the host routing table.
+2. `routeAdvertisements: Enabled` with an accepted `RouteAdvertisements`
+   resource advertising `PodNetwork` for the default network, so OVN does not
+   masquerade pod source addresses.
+
+Enable local-gateway routing only during an administrator-approved maintenance
+window:
+
+```sh
+oc patch network.operator cluster --type=merge \
+  -p '{"spec":{"defaultNetwork":{"ovnKubernetesConfig":{"gatewayConfig":{"routingViaHost":true}}}}}'
+```
+
+The operator observes these settings through its existing status conditions;
+it never changes cluster-wide network configuration or creates OVN routing
+resources. Local-gateway mode trades shared-gateway hardware offload for host
+route integration.
+
 ## 1. Build and push images
 
 Three images are built from `build/Dockerfile.{agent,operator,registrar}`:
@@ -102,13 +123,20 @@ Which remote prefixes are accepted (guardrails).
 | Field | Description |
 |-------|-------------|
 | `isdASes` | Remote ISD-ASes to exchange prefixes with. At least one required; each must match `\d+-([0-9a-fA-F_:]+|\d+)` (e.g. `1-ff00:0:110`). |
-| `forbiddenCIDRs` | IPv4 CIDRs never accepted from remotes. The operator always appends the cluster network and service network automatically. IPv4-only by design — the policy engine rejects IPv6 prefixes. |
+| `forbiddenCIDRs` | IPv4 CIDRs never accepted from remotes. The operator appends the cluster's IPv4 pod and service networks automatically and ignores IPv6 ranges because the policy engine is IPv4-only. |
+| `underlayCIDRs` | IPv4 transport networks used between nodes and the local SCION AS. These are always excluded from learned SCION routes to prevent recursive tunneling and keep registrar/discovery traffic reachable. |
 
 ### spec.dataplane (optional)
 
 | Field | Description |
 |-------|-------------|
 | `tunName` | Name of the TUN device created on each node. Default `scion0`. |
+
+Only destinations represented by routes learned from healthy SGRP sessions are
+sent to `scion0`. The agent does not perform source NAT: pod and host source
+addresses selected by the kernel are preserved through encapsulation. Return
+reachability requires advertising the prefix containing the selected source;
+the normal OVN-K host route commonly selects a pod-network address.
 
 ### spec.registrar (optional)
 
@@ -163,11 +191,11 @@ is omitted, an empty token is sent and the AS-side service rejects it
 oc get scionnetwork cluster            # ISD-AS and Ready columns populate
 oc get scionnetwork cluster -o jsonpath='{.status.conditions}' | jq
 oc -n scion-system rollout status ds/scion-node-agent
-oc debug node/<node> -- chroot /host ip link show scion0
+oc debug node/<node> -- chroot /host ip route get <remote-scion-ip>
 ```
 
 Expect `Available=True`, `Progressing=False`, `Degraded=False`,
-`status.isdAS` set, `status.nodes.ready == status.nodes.total`, and the
-`scion0` device up on each node. Agent metrics are scraped on port 9465;
-alerts `ScionNodeAgentDown`, `ScionNodeAgentAbsent`, and
+`status.isdAS` set, `status.nodes.ready == status.nodes.total`, and the route
+to a learned remote prefix selecting `scion0`. Agent metrics are scraped on
+port 9465; alerts `ScionNodeAgentDown`, `ScionNodeAgentAbsent`, and
 `ScionNetworkDegraded` are defined in `config/manifests/monitoring.yaml`.

@@ -448,3 +448,35 @@ func TestFinalizeHTTPFailureRetriesThenReleases(t *testing.T) {
 		t.Fatalf("object still present past deadline: %v", err)
 	}
 }
+
+func TestIsIPv4CIDR(t *testing.T) {
+	for _, tc := range []struct {
+		cidr string
+		want bool
+	}{
+		{"10.128.0.0/14", true},
+		{"fd01::/48", false},
+		{"not-a-cidr", false},
+	} {
+		if got := isIPv4CIDR(tc.cidr); got != tc.want {
+			t.Errorf("isIPv4CIDR(%q) = %t, want %t", tc.cidr, got, tc.want)
+		}
+	}
+}
+
+func TestClusterForbiddenCIDRsIncludesUnderlay(t *testing.T) {
+	sn := newScionNetwork()
+	sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"192.168.111.0/24", "fd00::/64"}
+	c, scheme := newFakeClient(t)
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+	got, err := r.clusterForbiddenCIDRs(context.Background(), sn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "192.168.111.0/24") {
+		t.Fatalf("forbidden CIDRs = %v, want underlay IPv4 prefix", got)
+	}
+	if slices.Contains(got, "fd00::/64") {
+		t.Fatalf("forbidden CIDRs = %v, IPv6 prefix should be filtered", got)
+	}
+}

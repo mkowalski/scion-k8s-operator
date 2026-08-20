@@ -15,12 +15,12 @@ The BR is the piece deliberately NOT moved into the node. Roles in an AS:
 | Border router (BR) | Data: forwards SCION packets between ASes; delivers packets to endhosts inside the AS as plain UDP/IP | AS infrastructure |
 | Endhost stack (daemon + SIG) | Data edge: path selection, IP-in-SCION encap/decap | moved into every node |
 
-Every packet's path: pod → OVN-K SNAT → host route → `scion0` (node SIG
-encapsulates) → **UDP to the local AS border router** → inter-AS hops →
-destination AS's BR → UDP to the remote SIG → decap. Inbound is the mirror:
-our BR receives SCION packets from the network and delivers them as plain
-UDP to the node SIG's data port (30056). A node never speaks SCION wire
-format to anything except its local BR.
+Every packet's intended path: pod → OVN-K local gateway (`ovn-k8s-mp0`) →
+host route for a learned SGRP prefix → `scion0` (node SIG encapsulates,
+preserving the original source) → **UDP to the local AS border router** →
+inter-AS hops → destination AS's BR → UDP to the remote SIG → decap. Inbound
+is the mirror: our BR delivers plain UDP to the node SIG's data port (30056).
+A node never speaks SCION wire format to anything except its local BR.
 
 Consequences:
 - `topology.json` (fetched at bootstrap) matters chiefly because it carries
@@ -119,12 +119,14 @@ Consequences:
 - SELinux: privileged pods run `spc_t`; capability-only pods run
   `container_t`, which may block host `/dev/net/tun` — open risk, validate on
   real RHCOS (we ship NET_ADMIN-only and document privileged fallback).
-- **OVN-Kubernetes interaction**: shared gateway mode SNATs pod egress to the
-  node IP through the *host* routing table → host routes to `scion0` steer
-  pod egress transparently, zero CNI changes. Inbound to pod IPs is
-  host-reachable via `ovn-k8s-mp0`. OVN-K ignores foreign interfaces; never
-  touch `br-ex`/default routes. On OVN-K, `node.spec.podCIDRs` may be empty —
-  per-node subnet lives in annotation `k8s.ovn.org/node-subnets`.
+- **OVN-Kubernetes interaction (corrected by live testing):** shared gateway
+  mode (`routingViaHost: false`) sends pod egress directly from OVS to `br-ex`
+  and bypasses host routes. Transparent SCION egress therefore requires local
+  gateway mode (`routingViaHost: true`). Preserving the pod source additionally
+  requires OVN route advertisements for the default `PodNetwork`; otherwise
+  local-gateway masquerade changes the source. The agent does not modify OVN,
+  `br-ex`, or nftables. On OVN-K, `node.spec.podCIDRs` may be empty and the
+  per-node subnet then lives in `k8s.ovn.org/node-subnets`.
 - Monitoring: user-workload monitoring + ServiceMonitor/PrometheusRule.
   Caveat: platform kube-state-metrics metrics (e.g.
   `kube_daemonset_status_number_unavailable`) may not be visible to the UWM

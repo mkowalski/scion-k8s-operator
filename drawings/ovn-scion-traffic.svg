@@ -1,125 +1,118 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="940" height="560" viewBox="0 0 940 560" font-family="Inter, Helvetica, Arial, sans-serif">
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6 z" fill="#16a34a"/>
     </marker>
     <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6 z" fill="#7c3aed"/>
     </marker>
-    <marker id="arrow-return" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
       <path d="M0,0 L8,3 L0,6 z" fill="#2563eb"/>
     </marker>
-    <marker id="arrow-blocked" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6 z" fill="#dc2626"/>
+    <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 z" fill="#64748b"/>
     </marker>
   </defs>
 
-  <text x="470" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#1e293b">Pod traffic through the node-local SCION gateway</text>
+  <text x="470" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#1e293b">Destination-specific SCION routing with source preservation</text>
 
-  <!-- platform requirement -->
-  <rect x="285" y="44" width="370" height="32" rx="16" fill="#fef3c7" stroke="#d97706"/>
-  <text x="470" y="65" text-anchor="middle" font-size="12" font-weight="600" fill="#92400e">OVN-K requirement: routingViaHost = true</text>
+  <rect x="260" y="43" width="420" height="34" rx="17" fill="#fef3c7" stroke="#d97706"/>
+  <text x="470" y="65" text-anchor="middle" font-size="12" font-weight="600" fill="#92400e">OVN-K prerequisite: routingViaHost = true</text>
 
-  <!-- cluster node -->
-  <rect x="25" y="92" width="535" height="390" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <!-- Node boundary -->
+  <rect x="25" y="92" width="545" height="390" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
   <text x="42" y="116" font-size="13" font-weight="600" fill="#64748b">OpenShift node</text>
 
-  <!-- pod -->
-  <rect x="55" y="145" width="130" height="62" rx="8" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
-  <text x="120" y="169" text-anchor="middle" font-size="13" font-weight="600" fill="#1e3a8a">workload pod</text>
-  <text x="120" y="189" text-anchor="middle" font-size="11" fill="#1e3a8a">10.128.2.15</text>
+  <!-- Sources -->
+  <rect x="55" y="145" width="135" height="62" rx="8" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="122" y="168" text-anchor="middle" font-size="13" font-weight="600" fill="#1e3a8a">workload pod</text>
+  <text x="122" y="189" text-anchor="middle" font-size="11" fill="#1e3a8a">source 10.128.2.15</text>
 
-  <!-- OVN -->
+  <rect x="55" y="258" width="135" height="62" rx="8" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.5"/>
+  <text x="122" y="281" text-anchor="middle" font-size="13" font-weight="600" fill="#075985">host process</text>
+  <text x="122" y="302" text-anchor="middle" font-size="11" fill="#075985">source 192.168.111.23</text>
+
+  <!-- OVN and host route -->
   <rect x="225" y="137" width="145" height="78" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
   <text x="297" y="162" text-anchor="middle" font-size="13" font-weight="600" fill="#92400e">OVN-Kubernetes</text>
   <text x="297" y="181" text-anchor="middle" font-size="11" fill="#92400e">ovn-k8s-mp0</text>
-  <text x="297" y="198" text-anchor="middle" font-size="10" fill="#92400e">hands egress to host</text>
+  <text x="297" y="198" text-anchor="middle" font-size="10" fill="#92400e">hands packets to host</text>
 
-  <!-- Host routing -->
-  <rect x="410" y="137" width="120" height="78" rx="8" fill="#e2e8f0" stroke="#64748b" stroke-width="1.5"/>
-  <text x="470" y="161" text-anchor="middle" font-size="13" font-weight="600" fill="#334155">host routing</text>
-  <text x="470" y="181" text-anchor="middle" font-size="10" fill="#334155">learned prefix</text>
-  <text x="470" y="198" text-anchor="middle" font-size="10" fill="#334155">192.168.100.0/24</text>
+  <rect x="410" y="137" width="130" height="78" rx="8" fill="#e2e8f0" stroke="#64748b" stroke-width="1.5"/>
+  <text x="475" y="160" text-anchor="middle" font-size="13" font-weight="600" fill="#334155">Linux routing</text>
+  <text x="475" y="180" text-anchor="middle" font-size="10" fill="#334155">learned SCION prefix</text>
+  <text x="475" y="198" text-anchor="middle" font-size="10" fill="#334155">192.168.100.0/24 → scion0</text>
 
-  <!-- forward path arrows -->
-  <line x1="185" y1="176" x2="220" y2="176" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow)"/>
-  <line x1="370" y1="176" x2="405" y2="176" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="190" y1="176" x2="220" y2="176" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <line x1="370" y1="176" x2="405" y2="176" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <path d="M190 289 C285 289, 330 214, 405 190" fill="none" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow-green)"/>
   <text x="202" y="166" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">1</text>
   <text x="388" y="166" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">2</text>
 
-  <!-- blocked shared gateway bypass -->
-  <path d="M297 137 C300 104, 405 102, 455 125" fill="none" stroke="#dc2626" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#arrow-blocked)"/>
-  <line x1="367" y1="105" x2="383" y2="121" stroke="#dc2626" stroke-width="2.5"/>
-  <line x1="383" y1="105" x2="367" y2="121" stroke="#dc2626" stroke-width="2.5"/>
-  <text x="374" y="87" text-anchor="middle" font-size="10" fill="#991b1b">shared-gateway bypass disabled</text>
+  <!-- Destination-only split -->
+  <rect x="225" y="245" width="315" height="74" rx="8" fill="#ecfdf5" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="382" y="268" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">destination decides the path</text>
+  <text x="382" y="288" text-anchor="middle" font-size="10" fill="#166534">learned SGRP prefix → scion0</text>
+  <text x="382" y="305" text-anchor="middle" font-size="10" fill="#64748b">all other destinations → normal host uplink</text>
+  <line x1="475" y1="215" x2="430" y2="241" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text x="465" y="237" font-size="10" font-weight="600" fill="#166534">3</text>
 
-  <!-- SNAT -->
-  <rect x="350" y="255" width="180" height="75" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
-  <text x="440" y="278" text-anchor="middle" font-size="12" font-weight="600" fill="#991b1b">SCION-owned SNAT</text>
-  <text x="440" y="297" text-anchor="middle" font-size="10" fill="#991b1b">only when oif = scion0</text>
-  <text x="440" y="315" text-anchor="middle" font-size="11" fill="#991b1b">pod IP &#8594; 198.18.0.1</text>
-  <path d="M470 215 L470 236 Q470 250 455 252" fill="none" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow)"/>
-  <text x="485" y="241" font-size="10" font-weight="600" fill="#166534">3</text>
+  <!-- Agent -->
+  <rect x="225" y="354" width="315" height="96" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="382" y="378" text-anchor="middle" font-size="13" font-weight="600" fill="#166534">scion-node-agent (per-node SIG)</text>
+  <rect x="245" y="393" width="112" height="36" rx="5" fill="#bbf7d0" stroke="#16a34a"/>
+  <text x="301" y="416" text-anchor="middle" font-size="11" fill="#166534">scion0 tun</text>
+  <rect x="372" y="393" width="148" height="36" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-dasharray="4 3"/>
+  <text x="446" y="407" text-anchor="middle" font-size="10" fill="#166534">source unchanged</text>
+  <text x="446" y="421" text-anchor="middle" font-size="10" fill="#166534">pod CIDR / host IP</text>
+  <line x1="382" y1="319" x2="382" y2="349" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text x="395" y="341" font-size="10" font-weight="600" fill="#166534">4</text>
 
-  <!-- agent / tun -->
-  <rect x="105" y="365" width="425" height="86" rx="9" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
-  <text x="317" y="388" text-anchor="middle" font-size="13" font-weight="600" fill="#166534">scion-node-agent (per-node SIG)</text>
-  <rect x="125" y="402" width="165" height="32" rx="5" fill="#bbf7d0" stroke="#16a34a"/>
-  <text x="207" y="422" text-anchor="middle" font-size="11" fill="#166534">scion0 &#183; 198.18.0.1/32</text>
-  <rect x="305" y="402" width="205" height="32" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-dasharray="4 3"/>
-  <text x="407" y="416" text-anchor="middle" font-size="10" fill="#166534">advertises pod CIDR +</text>
-  <text x="407" y="428" text-anchor="middle" font-size="10" fill="#166534">per-node egress /32 via SGRP</text>
-  <path d="M420 330 L420 347 Q420 360 405 364" fill="none" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow)"/>
-  <text x="434" y="353" font-size="10" font-weight="600" fill="#166534">4</text>
-
-  <!-- no underlay IP advertisement -->
-  <rect x="55" y="255" width="240" height="75" rx="8" fill="#f1f5f9" stroke="#94a3b8"/>
-  <text x="175" y="278" text-anchor="middle" font-size="11" font-weight="600" fill="#334155">underlay stays outside the tunnel</text>
-  <text x="175" y="297" text-anchor="middle" font-size="10" fill="#64748b">node IP carries SCION UDP only</text>
-  <text x="175" y="315" text-anchor="middle" font-size="10" fill="#64748b">node IP is not advertised via SGRP</text>
+  <!-- Normal egress branch -->
+  <path d="M475 137 C475 105, 535 105, 545 125" fill="none" stroke="#64748b" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#arrow-gray)"/>
+  <text x="486" y="101" font-size="10" fill="#475569">non-SCION destinations stay on the normal uplink</text>
 
   <!-- AS infrastructure -->
-  <rect x="595" y="150" width="145" height="245" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
-  <text x="667" y="174" text-anchor="middle" font-size="13" font-weight="600" fill="#5b21b6">Local SCION AS</text>
-  <rect x="615" y="205" width="105" height="58" rx="7" fill="#ddd6fe" stroke="#7c3aed"/>
-  <text x="667" y="228" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">border router</text>
-  <text x="667" y="247" text-anchor="middle" font-size="10" fill="#5b21b6">inter-AS forwarding</text>
-  <rect x="615" y="292" width="105" height="58" rx="7" fill="#ddd6fe" stroke="#7c3aed"/>
-  <text x="667" y="315" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">control service</text>
-  <text x="667" y="334" text-anchor="middle" font-size="10" fill="#5b21b6">gateway discovery</text>
+  <rect x="600" y="145" width="135" height="250" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="667" y="170" text-anchor="middle" font-size="13" font-weight="600" fill="#5b21b6">Local SCION AS</text>
+  <rect x="615" y="202" width="105" height="58" rx="7" fill="#ddd6fe" stroke="#7c3aed"/>
+  <text x="667" y="225" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">border router</text>
+  <text x="667" y="244" text-anchor="middle" font-size="10" fill="#5b21b6">inter-AS forwarding</text>
+  <rect x="615" y="290" width="105" height="58" rx="7" fill="#ddd6fe" stroke="#7c3aed"/>
+  <text x="667" y="313" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">control service</text>
+  <text x="667" y="332" text-anchor="middle" font-size="10" fill="#5b21b6">gateway discovery</text>
 
-  <!-- Agent to BR -->
-  <path d="M530 407 C570 407, 572 235, 610 235" fill="none" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
-  <text x="569" y="315" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6" transform="rotate(-90 569 315)">5 &#183; SCION over UDP</text>
+  <path d="M540 404 C575 404, 570 231, 610 231" fill="none" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
+  <text x="571" y="318" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6" transform="rotate(-90 571 318)">5 · SCION over UDP</text>
 
   <!-- Remote AS -->
-  <rect x="775" y="150" width="140" height="245" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
-  <text x="845" y="174" text-anchor="middle" font-size="13" font-weight="600" fill="#5b21b6">Remote AS</text>
-  <rect x="792" y="205" width="106" height="58" rx="7" fill="#ddd6fe" stroke="#7c3aed"/>
-  <text x="845" y="228" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">remote SIG</text>
-  <text x="845" y="247" text-anchor="middle" font-size="10" fill="#5b21b6">decapsulates IP</text>
-  <rect x="792" y="292" width="106" height="58" rx="7" fill="#dbeafe" stroke="#3b82f6"/>
-  <text x="845" y="315" text-anchor="middle" font-size="12" font-weight="600" fill="#1e3a8a">remote prefix</text>
-  <text x="845" y="334" text-anchor="middle" font-size="10" fill="#1e3a8a">192.168.100.0/24</text>
+  <rect x="775" y="145" width="140" height="250" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="845" y="170" text-anchor="middle" font-size="13" font-weight="600" fill="#5b21b6">Remote AS</text>
+  <rect x="792" y="202" width="106" height="58" rx="7" fill="#ddd6fe" stroke="#7c3aed"/>
+  <text x="845" y="225" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">remote SIG</text>
+  <text x="845" y="244" text-anchor="middle" font-size="10" fill="#5b21b6">decapsulates IP</text>
+  <rect x="792" y="290" width="106" height="58" rx="7" fill="#dbeafe" stroke="#3b82f6"/>
+  <text x="845" y="313" text-anchor="middle" font-size="12" font-weight="600" fill="#1e3a8a">remote prefix</text>
+  <text x="845" y="332" text-anchor="middle" font-size="10" fill="#1e3a8a">192.168.100.0/24</text>
 
-  <line x1="740" y1="234" x2="787" y2="234" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
-  <text x="764" y="222" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">6</text>
-  <line x1="845" y1="263" x2="845" y2="287" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow)"/>
-  <text x="858" y="281" font-size="10" font-weight="600" fill="#166534">7</text>
+  <line x1="735" y1="231" x2="787" y2="231" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
+  <text x="761" y="220" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6">6</text>
+  <line x1="845" y1="260" x2="845" y2="285" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text x="858" y="280" font-size="10" font-weight="600" fill="#166534">7</text>
 
-  <!-- Return path -->
-  <path d="M845 350 C845 470, 620 507, 480 451" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-return)"/>
-  <path d="M350 421 C235 505, 45 475, 45 350 L45 176 L50 176" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-return)"/>
-  <rect x="555" y="443" width="292" height="24" rx="12" fill="#eff6ff" stroke="#93c5fd"/>
-  <text x="701" y="459" text-anchor="middle" font-size="10" font-weight="600" fill="#1d4ed8">return traffic follows the advertised egress /32</text>
+  <!-- Return paths -->
+  <path d="M845 348 C845 470, 630 510, 485 450" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-blue)"/>
+  <path d="M225 417 C170 455, 42 445, 42 176 L50 176" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-blue)"/>
+  <rect x="553" y="443" width="295" height="24" rx="12" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="700" y="459" text-anchor="middle" font-size="10" font-weight="600" fill="#1d4ed8">return route uses the original source prefix</text>
 
-  <!-- legend / ownership -->
-  <line x1="48" y1="515" x2="78" y2="515" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow)"/>
-  <text x="88" y="519" font-size="10" fill="#475569">inner IP forward path</text>
-  <line x1="230" y1="515" x2="260" y2="515" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
-  <text x="270" y="519" font-size="10" fill="#475569">SCION-encapsulated UDP</text>
-  <line x1="450" y1="515" x2="480" y2="515" stroke="#2563eb" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-return)"/>
-  <text x="490" y="519" font-size="10" fill="#475569">return path</text>
-  <text x="700" y="519" font-size="10" font-weight="600" fill="#334155">Owns: scion0 + dedicated nftables table</text>
-  <text x="700" y="535" font-size="10" fill="#64748b">Does not modify br-ex or the OVN database</text>
+  <!-- legend -->
+  <line x1="48" y1="515" x2="78" y2="515" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+  <text x="88" y="519" font-size="10" fill="#475569">inner IP, source preserved</text>
+  <line x1="250" y1="515" x2="280" y2="515" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
+  <text x="290" y="519" font-size="10" fill="#475569">SCION-encapsulated UDP</text>
+  <line x1="480" y1="515" x2="510" y2="515" stroke="#2563eb" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrow-blue)"/>
+  <text x="520" y="519" font-size="10" fill="#475569">return path</text>
+  <text x="690" y="519" font-size="10" font-weight="600" fill="#334155">Owns: scion0 and learned routes only</text>
+  <text x="690" y="535" font-size="10" fill="#64748b">No SNAT · no egress IP pool · no OVN database writes</text>
 </svg>

@@ -36,10 +36,13 @@ rules:
   - apiGroups: [""]
     resources: ["nodes", "pods"]
     verbs: ["get", "list", "watch"]
-  # OpenShift cluster network config (forbidden CIDR merge).
-  - apiGroups: ["config.openshift.io"]
+  # OpenShift cluster networks: installed CIDRs and OVN gateway mode.
+  - apiGroups: ["config.openshift.io", "operator.openshift.io"]
     resources: ["networks"]
-    verbs: ["get"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["k8s.ovn.org"]
+    resources: ["routeadvertisements"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

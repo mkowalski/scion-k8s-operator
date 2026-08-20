@@ -41,10 +41,10 @@ Upstream fix status:
     IP_STACK=v4 — required, see the EXTERNAL_SUBNET_V4 guard)
   - Re-run: `ssh metal-u15 'cd /tmp/scion-t4-repo && CONFIG=/tmp/scion-t4-config.sh scion/configure_scion_as.sh'`
     (must run from repo root); teardown: `scion/cleanup_scion_as.sh` same way.
-  - 9 containers: scion-cs-a, scion-br-a, scion-dispatcher-a, scion-cs-b,
-    scion-br-b, scion-daemon-b, scion-sig-b, scion-discovery, scion-registrar.
-    Image `localhost/scion-infra:v0.15.0` (built locally; NOT pushed anywhere
-    by design).
+  - 10 containers: scion-cs-a, scion-br-a, scion-dispatcher-a, scion-cs-b,
+    scion-br-b, scion-daemon-b, scion-sig-b, scion-remote-echo,
+    scion-discovery, scion-registrar. Image `localhost/scion-infra:v0.15.1`
+    (built locally; NOT pushed anywhere by design).
   - Handoff values for the operator e2e:
     `DISCOVERY_URL=http://192.168.111.1:8041`,
     `REGISTRAR_URL=http://192.168.111.1:8642`,
@@ -52,34 +52,35 @@ Upstream fix status:
     `REMOTE_ISD_AS=1-ff00:0:111`, `REMOTE_PING_IP=192.168.100.1`.
   - The existing v0.15.0 image can crash under heavy agent churn.
     Rebuilding the topology image with v0.15.1 picks up the merged fix.
-- Operator/agent images for the cluster were built on the host and pushed to
-  the dev-scripts local registry (`virthost.ostest.test.metalkube.org:5000`,
-  tags `scion/scion-{operator,node-agent}:e2e`); registry CA trust +
-  pull-secret linkage were configured on the cluster and left in place.
+- Final source-preserving validation images were built on the host and pushed as
+  `quay.io/mkowalski/scion-operator:source-preserving-20260820-5` and
+  `quay.io/mkowalski/scion-node-agent:source-preserving-20260820-5`. Registry
+  trust and pull credentials are already configured on the cluster.
 
 ## Validation status (what has actually been proven)
 
-- Full operator e2e suite passed live on the ostest cluster: deploy, 5/5
-  agents Ready, real registrar registration of all nodes, churn, clean
-  undeploy. Inbound remote→pod traffic verified BY PACKET CAPTURE to
-  traverse SCION.
-- **Outbound pod→remote is a FALSE POSITIVE**: OVN-K's default shared
-  gateway mode (`routingViaHost: false`) bypasses host routes for pod
-  egress, so pod-originated traffic reaches the remote over the plain
-  underlay, not SCION. This is the biggest open design problem — candidate
-  fixes: local-gateway mode, admin policy-based external routes, or a
-  steering shim. See `known-gaps.md` finding 1.
-- Node-IP `/32` advertisement is disabled in e2e (routing the SCION underlay
-  into the tunnel created a loop); operator-side overlap guard proposed.
+- The hardened full operator e2e suite passed live on the five-node `ostest`
+  cluster on 2026-08-20: deploy, 5/5 agents Ready, path-conclusive dataplane,
+  registrar registration, replacement-pod churn, and clean undeploy.
+- OVN-K used `routingViaHost: true` plus an accepted default-network
+  `PodNetwork` `RouteAdvertisements` resource. The selected-node route for
+  `192.168.100.1` used `scion0`; a non-SCION control route did not.
+- The remote `inet scion-e2e` guard blocked direct underlay delivery. Captures
+  on `sigb` observed pod source `10.128.2.49` and the node route-selected host
+  source `10.128.2.2` unchanged after decapsulation. TCP and bidirectional ICMP
+  passed. The agent adds no SNAT or egress identity.
+- Node-IP `/32` advertisement remains disabled in e2e because routing the
+  SCION underlay address into the tunnel creates a loop.
+- `acceptPolicy.underlayCIDRs` excluded `192.168.111.0/24` from learned routes;
+  the AS test topology source-routed its control-service replies over the
+  underlay, keeping discovery, registrar sync, and finalizer cleanup reachable.
 
 ## Suggested next steps (priority order)
 
-1. Design + fix the OVN-K pod-egress bypass (spec-level change; brainstorm
-   before coding).
-2. Decide on upstream PR for the dev-scripts `scion-topology` branch.
-3. CI for scion-k8s-operator (none exists; `.github/workflows` empty):
+1. Decide on an upstream PR for the dev-scripts `scion-topology` branch.
+2. CI for scion-k8s-operator (none exists; `.github/workflows` empty):
    build, vet, unit+envtest, discovery integration test, bundle-check.
-4. Remaining items in `known-gaps.md` (API group placeholder, nonroot agent
+3. Remaining items in `known-gaps.md` (API group placeholder, nonroot agent
    TODO, SA/pull-secret GC issue, registrar TLS, IPv6, upstream
    TTL/heartbeat SIG-registration proposal — draft in `as-registration.md`).
 

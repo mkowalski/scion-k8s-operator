@@ -129,27 +129,28 @@ func TestBackendForHTTPSecretWithoutTokenKey(t *testing.T) {
 
 func TestDegradedReason(t *testing.T) {
 	tests := []struct {
-		name      string
-		ready     int32
-		total     int32
-		regFailed bool
-		backend   string
-		wantOn    bool
-		wantWhy   string
+		name       string
+		ready      int32
+		total      int32
+		platform   podEgressPlatform
+		regFailed  bool
+		backend    string
+		wantOn     bool
+		wantReason string
 	}{
-		{"all healthy", 2, 2, false, "http", false, "UnreadyAgents"},
-		{"unready agents only", 1, 2, false, "manual", true, "UnreadyAgents"},
-		{"registrar failed, agents ready", 2, 2, true, "http", true, "RegistrarSyncFailed"},
-		{"registrar failed, anapaya", 2, 2, true, "anapaya", true, "RegistrarSyncFailed"},
-		{"registrar failed but unready agents take precedence", 1, 2, true, "http", true, "UnreadyAgents"},
-		{"registrar failed with manual backend does not degrade", 2, 2, true, "manual", false, "UnreadyAgents"},
-		{"registrar failed with default backend does not degrade", 2, 2, true, "", false, "UnreadyAgents"},
+		{"all healthy", 2, 2, podEgressPlatform{Status: metav1.ConditionTrue}, false, "http", false, "AsExpected"},
+		{"unready agents only", 1, 2, podEgressPlatform{Status: metav1.ConditionTrue}, false, "manual", true, "UnreadyAgents"},
+		{"host routing disabled", 2, 2, podEgressPlatform{Status: metav1.ConditionFalse, Reason: "HostRoutingDisabled"}, false, "manual", true, "HostRoutingDisabled"},
+		{"unknown platform does not degrade", 2, 2, podEgressPlatform{Status: metav1.ConditionUnknown}, false, "manual", false, "AsExpected"},
+		{"registrar failed, agents ready", 2, 2, podEgressPlatform{Status: metav1.ConditionTrue}, true, "http", true, "RegistrarSyncFailed"},
+		{"registrar failed but unready agents take precedence", 1, 2, podEgressPlatform{Status: metav1.ConditionFalse, Reason: "HostRoutingDisabled"}, true, "http", true, "UnreadyAgents"},
+		{"registrar failed with manual backend does not degrade", 2, 2, podEgressPlatform{Status: metav1.ConditionTrue}, true, "manual", false, "AsExpected"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			on, why := degradedReason(tc.ready, tc.total, tc.regFailed, tc.backend)
-			if on != tc.wantOn || why != tc.wantWhy {
-				t.Errorf("degradedReason = (%v, %q), want (%v, %q)", on, why, tc.wantOn, tc.wantWhy)
+			on, why := degradedReason(tc.ready, tc.total, tc.platform, tc.regFailed, tc.backend)
+			if on != tc.wantOn || why != tc.wantReason {
+				t.Errorf("degradedReason = (%v, %q), want (%v, %q)", on, why, tc.wantOn, tc.wantReason)
 			}
 		})
 	}

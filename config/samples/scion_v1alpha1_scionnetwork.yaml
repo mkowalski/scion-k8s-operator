@@ -9,3 +9,6 @@ spec:
   acceptPolicy:
     isdASes:
       - 1-ff00:0:110
+    # Keep the node-to-AS transport network outside learned SCION routes.
+    underlayCIDRs:
+      - 192.168.111.0/24

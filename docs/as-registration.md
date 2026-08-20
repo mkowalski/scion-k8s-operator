@@ -118,6 +118,10 @@ appear in `status.registrar` (`registeredNodes`, `lastSyncTime`,
 `lastError`), and a failing sync marks the ScionNetwork `Degraded`
 (reason `RegistrarSyncFailed`).
 
+The default client timeout is 45 seconds, covering the registrar's 30-second
+reload-command bound without allowing timed-out retries to queue behind its
+serialized topology update.
+
 ## Anapaya backend (stub)
 
 `backend: anapaya` is declared in the API but not implemented: `Ensure`

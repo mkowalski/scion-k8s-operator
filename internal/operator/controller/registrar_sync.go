@@ -28,9 +28,10 @@ const (
 	sigDataPort = 30056
 )
 
-// registrarTimeout bounds one backend Ensure call so a hung AS-side
-// endpoint cannot stall the reconcile loop.
-const registrarTimeout = 30 * time.Second
+// registrarTimeout bounds one backend Ensure call so a hung AS-side endpoint
+// cannot stall the reconcile loop. It must exceed the registrar service's
+// 30-second reload-command timeout.
+const registrarTimeout = 45 * time.Second
 
 // nodesToSIGs maps nodes matching selector to their SIG endpoints, sorted
 // by node name for deterministic status output. Selected nodes without an
@@ -138,17 +139,18 @@ func (r *ScionNetworkReconciler) syncRegistrar(ctx context.Context, sn *v1alpha1
 	return st, false
 }
 
-// degradedReason decides the Degraded condition from agent readiness and
-// registrar sync state. Unready agents take precedence as the reason; a
-// registrar failure degrades only for non-manual backends (manual cannot
-// meaningfully fail from the AS side).
-func degradedReason(ready, total int32, regFailed bool, backend string) (bool, string) {
+// degradedReason decides the Degraded condition from agent readiness,
+// platform routing support, and registrar sync state, in that order.
+func degradedReason(ready, total int32, platform podEgressPlatform, regFailed bool, backend string) (bool, string) {
 	regDegraded := regFailed && backend != "" && backend != "manual"
 	if ready < total {
 		return true, "UnreadyAgents"
 	}
+	if platform.Status == metav1.ConditionFalse {
+		return true, platform.Reason
+	}
 	if regDegraded {
 		return true, "RegistrarSyncFailed"
 	}
-	return false, "UnreadyAgents"
+	return false, "AsExpected"
 }

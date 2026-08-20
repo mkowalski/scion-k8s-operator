@@ -26,15 +26,16 @@ bootc-based RHCOS changes) are handled in the implementation plan.
 2. Runs an embedded per-node SCION-IP gateway (micro-SIG): a `scion0` tun
    device in the host network namespace tunneling IP-in-SCION to remote
    SIGs, with dynamic prefix exchange (SGRP).
-3. Advertises its own reachability into the SCION network: node primary
-   IP (/32) and the node's pod CIDR, enabling inbound traffic to node and
-   pods.
+3. Advertises its own pod CIDR and, when explicitly enabled and safe, its node
+   IP. These original source prefixes provide return reachability without a
+   translated egress identity.
 
-Non-SCION-aware workloads need zero changes: pod egress to remote SCION
-prefixes is steered via host routes (OVN-Kubernetes SNATs pod egress to
-the node IP through the host routing table); inbound traffic to pod IPs
-is delivered via the host-to-pod path OVN-K already provides
-(`ovn-k8s-mp0`).
+Non-SCION-aware workloads need zero changes. On OVN-Kubernetes,
+`routingViaHost: true` sends pod egress through `ovn-k8s-mp0` into the host
+routing table. Only routes learned from healthy SGRP sessions select `scion0`;
+the agent performs no source NAT. Preserving pod sources also requires OVN
+route advertisements for the default `PodNetwork`. Inbound traffic uses the
+existing host-to-pod path.
 
 ## 2. Background and key research findings
 
@@ -94,10 +95,9 @@ Scaffolded with operator-sdk/kubebuilder (controller-runtime). Duties:
   webhook in v1).
 - Aggregate per-node agent health into `status.conditions`
   (`Available`, `Progressing`, `Degraded` — ClusterOperator style) and a
-  per-node summary (ready/total, degraded nodes with reasons). Source of
-  per-node state: agent pod readiness plus agent-published state (exact
-  mechanism — Lease vs. status endpoint — decided in the implementation
-  plan; node annotations are avoided).
+  per-node summary. On OpenShift the same conditions report whether OVN is in
+  local-gateway mode with source preservation enabled. No allocation status or
+  agent-written API state is required.
 - Handle upgrades: new operator version rolls the DaemonSet
   (RollingUpdate, maxUnavailable 10%).
 - Run the registrar controller: reconcile the AS-side SIG registration
@@ -143,26 +143,27 @@ revisit before any public release).
   discovery endpoints and OSS ASes.
 - **Daemon module**: embedded sciond; sqlite path/trust caches on the
   hostPath; gRPC on `127.0.0.1:30255`.
-- **Gateway module**: creates `scion0`; advertises node pod CIDR (from
-  its own Node object `spec.podCIDRs`; node name via downward API; RBAC:
-  `get` nodes only) and node IP /32 via SGRP; learns remote prefixes via
-  control-service gateway discovery + SGRP filtered by `acceptPolicy`;
-  programs host routes for learned prefixes, tagged with a dedicated
-  route protocol ID for safe identification and cleanup.
+- **Gateway module**: creates `scion0`; advertises the node pod CIDR (from
+  its own Node object `spec.podCIDRs`; node name via downward API) and optional
+  node IP via SGRP; learns remote prefixes via control-service gateway discovery
+  + SGRP filtered by `acceptPolicy`; and installs exactly those learned prefixes
+  as host routes through `scion0`.
 - **Route guardrails**: refuses to install prefixes overlapping
-  clusterNetwork, serviceNetwork, machineNetwork, or the default route.
-  Never touches `br-ex` or OVN-K-owned state.
+  clusterNetwork, serviceNetwork, configured underlay transport networks, or
+  the default route. The agent does not install SNAT, policy-routing, eBPF, or
+  OVN rules, and never modifies `br-ex` or the OVN database.
 
 ### 3.4 Traffic flow
 
-- Egress (pods): pod → OVN-K shared-gateway SNAT to node IP → host
-  routing table → `scion0` → IP-in-SCION frames over UDP to remote SIG.
-- Egress (node/host processes): host routing table → `scion0`.
-- Ingress: remote SIG → this node's SIG (reachable at advertised node
-  IP) → decapsulate on `scion0` → host routing → local pod CIDR via
-  `ovn-k8s-mp0`, or node itself.
-- Symmetry: each node advertises only its own pod CIDR, so return
-  traffic lands on the correct node; no cross-node NAT.
+- Egress (pods): pod → OVN-K local gateway (`ovn-k8s-mp0`) → host routing
+  table → an exact learned route selects `scion0` → IP-in-SCION frames over UDP
+  to the remote SIG. The original pod source remains unchanged.
+- Egress (node/host processes): host routing table → an exact learned route →
+  `scion0`, retaining the host-selected source address.
+- Other destinations: no matching SCION route exists, so the normal host uplink
+  remains selected.
+- Ingress: remote SIG → this node's SIG → decapsulate on `scion0` → host
+  routing → local pod CIDR via `ovn-k8s-mp0`, or node itself.
 
 ### 3.5 Security
 
@@ -262,7 +263,8 @@ into one standard mechanism.
 - Vanilla Kubernetes support (path preserved; SCC logic isolated).
 - Cluster control-plane/boot-time traffic over SCION.
 - NAT traversal between node and border router.
-- IPv6-only clusters (designed for, not tested).
+- Native IPv6-over-SCION (dual-stack clusters run the IPv4 path; IPv6 cluster
+  and service CIDRs are excluded from the IPv4-only policy input).
 - Anapaya registrar backend implementation (interface and stub tests in
   v1; real-appliance validation in v1.x).
 - Multipath/path-policy tuning beyond defaults.
@@ -330,3 +332,8 @@ into one standard mechanism.
   bootstrap mode (the operator itself fetches `<discoveryURL>/topology`);
   for dns/dhcp/mdns modes discovery happens on the nodes and the field
   stays empty (future: agent-reported).
+- OVN-K shared-gateway mode was proven to bypass the host routing table.
+  Transparent pod egress now requires `routingViaHost: true`; preserving pod
+  sources additionally requires an accepted default-network `PodNetwork`
+  RouteAdvertisements configuration. The operator observes these prerequisites
+  through existing conditions and never modifies OVN state.

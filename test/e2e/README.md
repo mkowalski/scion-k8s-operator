@@ -23,6 +23,10 @@ success; the first failure prints `FAILED phase: <phase>` and exits non-zero.
     `spec.agentImage`).
 - UDP ports 30056 (data), 30256 (SIG control), and 30856 (SIG probe) open
   between the cluster nodes and the AS host, in both directions.
+- OVN-Kubernetes configured for source-preserving host routing:
+  `routingViaHost: true`, `routeAdvertisements: Enabled`, and an accepted
+  default-network `RouteAdvertisements` resource advertising `PodNetwork`.
+  The suite checks these settings before creating the `ScionNetwork`.
 
 ## Environment variables
 
@@ -32,9 +36,12 @@ success; the first failure prints `FAILED phase: <phase>` and exits non-zero.
 | `REMOTE_ISD_AS`   | `configure`                                  | Remote ISD-AS to accept prefixes from, e.g. `1-ff00:0:111` |
 | `REGISTRAR_URL`   | `configure`, `assert_registration`, `churn`, `undeploy` | Registrar base URL, e.g. `http://as-host:8642` |
 | `REGISTRAR_TOKEN` | same as `REGISTRAR_URL`                      | Bearer token for the registrar |
-| `REMOTE_PING_IP`  | `assert_dataplane`                           | An IP behind the remote SIG (dev topology target netns IP) |
-| `REMOTE_SSH`      | optional (`assert_dataplane`)                | ssh destination on the remote side for the inbound ping check; skipped if unset |
-| `TEST_IMAGE`      | optional                                     | Test pod image (default `registry.fedoraproject.org/fedora-toolbox:latest` — chosen because its iputils `ping` works unprivileged via ICMP datagram sockets; ubi-minimal/ubi/fedora base images ship no `ping`, and busybox `ping` needs raw sockets. Override with any image whose `ping` works in an unprivileged pod) |
+| `REMOTE_PING_IP`  | `assert_dataplane`, `churn`, `undeploy`      | An IP behind the remote SIG |
+| `UNDERLAY_CIDR`   | optional (`configure`)                       | Cluster-to-AS transport CIDR excluded from learned SCION routes (default `192.168.111.0/24`) |
+| `REMOTE_SSH`      | `assert_dataplane`                           | SSH destination on the remote side; used to verify the underlay guard, capture the inner source addresses, and initiate inbound traffic. Set to `local` when running the suite on the AS host itself |
+| `REMOTE_TCP_PORT` | optional                                     | TCP test endpoint behind the remote SIG (default `18080`) |
+| `NON_SCION_IP`    | optional                                     | Control destination that must keep its normal route (default `1.1.1.1`) |
+| `TEST_IMAGE`      | optional                                     | Test pod image (default `registry.fedoraproject.org/fedora-toolbox:latest` — chosen because its iputils `ping` works unprivileged via ICMP datagram sockets; ubi-minimal/ubi/fedora base images ship no `ping`, and busybox `ping` needs raw sockets. The image must also provide `curl`) |
 | `TUN_NAME`        | optional                                     | tun device name (default `scion0`) |
 | `PHASES`          | optional                                     | Space-separated subset of phases (default: all) |
 | `KEEP_OPERATOR`   | optional (`undeploy`)                        | Set to `1` to leave the operator installed after teardown |
@@ -77,7 +84,9 @@ assert_registration churn undeploy`.
   `scion-system/scion-registrar-token` (key `token`) and the
   `REGISTRAR_TOKEN` env of the registrar service. The operator surfaces this
   in `status.registrar.lastError`.
-- **Outbound ping fails but agents are Ready**: check the remote AS accepted
-  the SIG registration (`curl -H "Authorization: Bearer $REGISTRAR_TOKEN"
-  $REGISTRAR_URL/v1/sigs`) and that UDP 30056/30256/30856 are open
-  node↔AS in both directions.
+- **Outbound traffic fails but agents are Ready**: confirm `routingViaHost`
+  and route advertisements with `oc get network.operator cluster -o yaml`
+  and `oc get routeadvertisements.k8s.ovn.org -o yaml`; then check that the
+  remote AS accepted SIG registration and UDP 30056/30256/30856 is open
+  node↔AS in both directions. The dataplane phase rejects a direct-underlay
+  false positive and captures the pod and node source addresses on `sigb`.
