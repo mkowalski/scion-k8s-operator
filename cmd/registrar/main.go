@@ -3,7 +3,7 @@
 // the scion-k8s-operator register per-node SIG entries in the AS
 // topology.json, then reloads the control service.
 //
-// The SCION control service (v0.15.0) reloads its topology on SIGHUP
+// The SCION control service (v0.15.1) reloads its topology on SIGHUP
 // (control/cmd/control/main.go wires app.SIGHUPChannel into
 // topology.NewLoader; private/topology/reload.go re-reads the file on that
 // channel), so the default reload command sends SIGHUP via systemd and
@@ -47,7 +47,7 @@ func run(log *slog.Logger) error {
 		prefix   = flag.String("prefix", "k8s-", "name prefix identifying operator-managed sigs entries")
 		listen   = flag.String("listen", ":8642", "listen address")
 		// SIGHUP triggers a topology reload in the control service
-		// (scion v0.15.0 private/topology/reload.go); no restart needed.
+		// (scion v0.15.1 private/topology/reload.go); no restart needed.
 		reloadCmd = flag.String("reload-cmd", "systemctl kill -s HUP scion-control",
 			"command run after patching the topology; split on spaces "+
 				"(no shell quoting supported)")

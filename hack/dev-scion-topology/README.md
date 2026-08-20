@@ -6,7 +6,7 @@ scion-node-agent against. Requires docker and python3 (scion.sh drives both).
 ## Start the topology
 
 ```sh
-git clone --depth 1 -b v0.15.0 https://github.com/scionproto/scion
+git clone --depth 1 -b v0.15.1 https://github.com/scionproto/scion
 cd scion
 ./scion.sh topology -c topology/tiny.topo
 ./scion.sh run
@@ -25,7 +25,7 @@ Stop with `./scion.sh stop`.
 - `gen/trcs/ISD1-B1-S1.trc` — all TRCs, copied to a flat `trcs/` directory.
 - `gen/ASff00_0_112/certs/` — the same TRCs, copied per AS.
 
-Layout verified against the topology generator source at v0.15.0
+Layout verified against the topology generator source at v0.15.1
 (`tools/topology/cert.py`, `tools/topology/common.py:base_dir`,
 `scion-pki/testcrypto/testcrypto.go` which populates `<out>/trcs/`).
 

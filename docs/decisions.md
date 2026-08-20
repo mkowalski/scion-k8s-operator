@@ -26,7 +26,7 @@ Rejected: (A) glueing stock `scion-daemon`/`scion-ip-gateway` binaries with
 shell — breaks on dynamic per-node prefix advertisement, which stock SIG's
 static config model handles poorly; (B) operator orchestrating stock
 components — fights the same static-config model from outside. Cost accepted:
-we track scionproto internals (pinned v0.15.0; `private/` packages are not
+we track scionproto internals (pinned v0.15.1; `private/` packages are not
 API-stable; isolated to two files: `internal/agent/sig/sig.go`,
 `internal/agent/daemonapi/daemonapi.go`).
 
@@ -113,7 +113,7 @@ corrected as a result: bootstrapper TRC endpoint has a `/blob` suffix and
 uppercase filenames; `dhcpv4.OptionWWWServer` is actually
 `OptionDefaultWorldWideWebServer`; `gateway.Run` self-triggers its initial
 policy load (blocking send on `ConfigReloadTrigger`); `ConfigVersion` in the
-traffic policy is parsed and ignored at v0.15.0; control service reloads
+traffic policy is parsed and ignored at v0.15.1; control service reloads
 topology on SIGHUP. Each is cited at the point of use in code comments.
 
 ## D14: Border router stays in the AS infrastructure

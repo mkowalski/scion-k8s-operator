@@ -3,8 +3,8 @@
 Honest inventory of what has NOT been verified and what must happen before
 this project is production-real. State as of the v0.1.0 merge to main
 (commit 835d957), updated after the first live e2e run on OpenShift
-(branch `live-e2e-fixes`, 2026-07-24). See also spec §9 (implementation
-deviations).
+(branch `live-e2e-fixes`, 2026-07-24) and the SCION v0.15.1 dependency
+upgrade (2026-08-20). See also spec §9 (implementation deviations).
 
 ## Retired by the live e2e run (2026-07-24)
 
@@ -40,6 +40,9 @@ this retired:
   OVN-K SNAT-path assumption was DISPROVEN — see below.
 - **Image builds**: operator and agent images build and run
   (agent requires CGO for scionproto's go-sqlite3; glibc runtime base).
+- **Remote-SIG churn panic**: scionproto/scion#4954 fixed the teardown race
+  in `publishingRoutingTable`; the fix shipped in SCION v0.15.1, now pinned
+  by the operator and dev topology.
 
 Fixes made during the run (all on `live-e2e-fixes`): privileged agent
 DaemonSet + SCC, CGO agent image, scionproto duplicate-metrics crash
@@ -73,22 +76,11 @@ advertisement off, inbound ping source, printf bugs).
    refuse or warn when advertised node IPs overlap the underlay path;
    `advertisement.nodeIP: false` is the safe default in single-NIC
    topologies.
-3. **scionproto v0.15.0 remote-SIG panic under session churn.** The dev
-   topology's remote SIG (upstream scionproto gateway binary) crashed with
-   a nil-pointer panic in `publishingRoutingTable.ClearSession`
-   (`gateway/control/publishingroutingtable.go:165`) while agent pods were
-   restarting. Upstream defect; affects any SIG peer under churn.
-   **Reported and fixed upstream**: root cause is a teardown-ordering race in
-   `EngineController.run` — see
-   [scionproto/scion#4953](https://github.com/scionproto/scion/issues/4953)
-   and fix PR
-   [scionproto/scion#4954](https://github.com/scionproto/scion/pull/4954).
-   Retire this item once the fix lands in a release we pin.
-4. **Registry/pull-secret assumptions in e2e.** The agent ServiceAccount is
+3. **Registry/pull-secret assumptions in e2e.** The agent ServiceAccount is
    operator-owned and garbage-collected with the ScionNetwork; per-SA
    `imagePullSecrets` links are lost across undeploy/configure cycles.
    Fine with a properly authed cluster-wide registry, awkward otherwise.
-5. **Test weaknesses noticed:** `wait_agents_ready` can pass against stale
+4. **Test weaknesses noticed:** `wait_agents_ready` can pass against stale
    DaemonSet status immediately after pod deletion (churn re-check raced);
    the outbound dataplane assertion cannot distinguish SCION-path from
    underlay-path delivery (see finding 1).
@@ -122,8 +114,7 @@ advertisement off, inbound ping source, printf bugs).
    v1alpha1).
 5. **Upstream proposal.** File the TTL/heartbeat dynamic SIG
    self-registration design with scionproto/scion (draft paragraph in
-   `as-registration.md`). The `ClearSession` panic (finding 3) is already
-   reported and fixed: scionproto/scion#4953 / #4954.
+   `as-registration.md`).
 6. **Gateway readiness hook upstream.** `gateway.Run` exposes no "data plane
    up" signal; readiness is construction-based (decision D11). An upstream
    callback/channel would make readyz honest.
@@ -135,7 +126,7 @@ advertisement off, inbound ping source, printf bugs).
    dual-stack/IPv6 support (policy engine is deliberately IPv4-only),
    scale measurement of per-node SIG session fan-out (N nodes × M remote
    SIGs).
-9. Dependency watch: scionproto pinned at v0.15.0; `private/` package churn
+9. Dependency watch: scionproto pinned at v0.15.1; `private/` package churn
    is expected on bumps — the two isolation files (`internal/agent/sig`,
    `internal/agent/daemonapi`) are the designated blast radius. The
    `grandcat/zeroconf` (mDNS) dependency is lightly maintained;

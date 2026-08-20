@@ -25,7 +25,7 @@ func TestRenderRoutingPolicyContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderRoutingPolicy: %v", err)
 	}
-	// Verified line format (scion v0.15.0 gateway/routing/marshal.go:72-125):
+	// Verified line format (scion v0.15.1 gateway/routing/marshal.go:72-125):
 	//   action from to network[,network...] [# comment]
 	for _, remote := range []string{"1-ff00:0:110", "2-ff00:0:210"} {
 		for _, net := range []string{"10.128.2.0/23", "192.168.111.20/32"} {

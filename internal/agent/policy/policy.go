@@ -1,7 +1,7 @@
 // Package policy renders SCION-IP gateway (SIG) prefix-exchange policies:
 // the IP routing policy (text format parsed by
 // github.com/scionproto/scion/gateway/routing, see marshal.go in that
-// package at v0.15.0) and the traffic policy JSON (parsed by
+// package at v0.15.1) and the traffic policy JSON (parsed by
 // gateway/control/sessionpolicy.go LegacySessionPolicyAdapter; sample at
 // dist/conffiles/gateway.json upstream).
 //
@@ -34,7 +34,7 @@ type Input struct {
 }
 
 // RenderRoutingPolicy renders the SIG IP routing policy in the text format
-// verified against scion v0.15.0 gateway/routing/marshal.go (parseRule):
+// verified against scion v0.15.1 gateway/routing/marshal.go (parseRule):
 //
 //	<action> <from-ia> <to-ia> <prefix>[,<prefix>...] [# comment]
 //
@@ -43,7 +43,7 @@ type Input struct {
 // space minus ForbiddenCIDRs.
 //
 // The rendered policy relies on the SIG's default-deny behavior: the
-// gateway loads routing policies with DefaultAction Reject (scion v0.15.0
+// gateway loads routing policies with DefaultAction Reject (scion v0.15.1
 // gateway/loader.go:113), so any traffic not matched by an explicit accept
 // rule here is rejected; we never need (and never emit) reject rules.
 func RenderRoutingPolicy(in Input) (string, error) {
@@ -61,12 +61,12 @@ func RenderRoutingPolicy(in Input) (string, error) {
 	return b.String(), nil
 }
 
-// trafficPolicyDoc mirrors the JSON shape consumed by scion v0.15.0
+// trafficPolicyDoc mirrors the JSON shape consumed by scion v0.15.1
 // gateway/control/sessionpolicy.go (LegacySessionPolicyAdapter.Parse);
 // sample at dist/conffiles/gateway.json.
 type trafficPolicyDoc struct {
 	ASes map[string]trafficPolicyAS `json:"ASes"`
-	// ConfigVersion is parsed but ignored by scion v0.15.0
+	// ConfigVersion is parsed but ignored by scion v0.15.1
 	// (gateway/control/sessionpolicy.go: cfg.ConfigVersion is never read
 	// after unmarshal); reloads are SIGHUP-driven and unconditional, so a
 	// constant value is safe today. Re-check this on scion upgrades in

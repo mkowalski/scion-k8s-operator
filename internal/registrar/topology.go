@@ -12,7 +12,7 @@ import (
 )
 
 // SIG is one gateway entry in the topology `sigs` map. Field names match
-// scion v0.15.0 private/topology/json/json.go GatewayInfo (ctrl_addr,
+// scion v0.15.1 private/topology/json/json.go GatewayInfo (ctrl_addr,
 // data_addr; the optional probe_addr and allow_interfaces are not managed
 // by the operator).
 type SIG struct {

@@ -1,7 +1,7 @@
 // Package daemonapi serves the standard sciond gRPC API (DaemonService)
 // for node-local SCION-native applications.
 //
-// This file is a mechanical port of daemon/cmd/daemon/main.go@v0.15.0
+// This file is a mechanical port of daemon/cmd/daemon/main.go@v0.15.1
 // (github.com/scionproto/scion); update together with dependency bumps.
 //
 // All scionproto imports (including private/ packages) are intentionally

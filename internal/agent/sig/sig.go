@@ -3,7 +3,7 @@
 // Instead of connecting to a SCION daemon over gRPC (as the upstream
 // gateway binary does), it uses daemon.NewStandaloneConnector so the
 // agent needs no sidecar daemon. The gateway wiring mirrors upstream
-// gateway/cmd/gateway/main.go (v0.15.0, realMain, lines 56-193).
+// gateway/cmd/gateway/main.go (v0.15.1, realMain, lines 56-193).
 package sig
 
 import (

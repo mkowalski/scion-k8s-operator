@@ -101,7 +101,7 @@ func run(log *slog.Logger) error {
 
 	// reload is 1-buffered: the embedded gateway performs its own initial
 	// blocking send on this channel to load policies at startup
-	// (scion v0.15.0 gateway/gateway.go:367-371 sends ConfigReloadTrigger
+	// (scion v0.15.1 gateway/gateway.go:367-371 sends ConfigReloadTrigger
 	// <- struct{}{} in a goroutine; the config loader is the receiver).
 	// We only push (non-blocking) on policy re-render.
 	reload := make(chan struct{}, 1)

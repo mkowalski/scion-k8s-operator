@@ -42,11 +42,11 @@ The operator only publishes the desired set; the AS operator applies it.
    }
    ```
 
-   Field names match scion v0.15.0 `private/topology/json` GatewayInfo
+   Field names match scion v0.15.1 `private/topology/json` GatewayInfo
    (`ctrl_addr`, `data_addr`; `probe_addr` and `allow_interfaces` are
    optional and not managed by the operator).
 
-3. Reload the control service. SCION v0.15.0 reloads its topology on
+3. Reload the control service. SCION v0.15.1 reloads its topology on
    SIGHUP with no control-plane downtime:
 
    ```sh
