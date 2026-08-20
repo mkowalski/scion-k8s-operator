@@ -15,6 +15,12 @@ the only things nodes need reachability to:
 - the discovery server (default port 8041) reachable from nodes for
   bootstrap.
 
+Every IPv4 network carrying node-to-AS traffic must be listed in
+`spec.acceptPolicy.underlayCIDRs`. This is a correctness requirement, not an
+optional hardening knob: accepting the underlay from a remote SGRP peer can
+route bootstrap, registrar, probe, or border-router traffic back into the
+tunnel and deadlock the attachment.
+
 On OpenShift with OVN-Kubernetes, transparent source-preserving pod egress has
 two platform prerequisites:
 
@@ -113,8 +119,8 @@ Which local prefixes each node advertises into SCION via SGRP.
 
 | Field | Description |
 |-------|-------------|
-| `podCIDR` | Advertise each node's pod CIDR. Default `true`. |
-| `nodeIP` | Advertise each node's IP (/32). Default `true`. |
+| `podCIDR` | Advertise each node's pod CIDR. Default `true`; required for return traffic to source-preserved pods. |
+| `nodeIP` | Advertise each node's IP (/32). Default `true`, but set `false` whenever the node IP is also a SCION underlay address; advertising that address creates recursive routing. |
 
 ### spec.acceptPolicy (required)
 
@@ -124,7 +130,7 @@ Which remote prefixes are accepted (guardrails).
 |-------|-------------|
 | `isdASes` | Remote ISD-ASes to exchange prefixes with. At least one required; each must match `\d+-([0-9a-fA-F_:]+|\d+)` (e.g. `1-ff00:0:110`). |
 | `forbiddenCIDRs` | IPv4 CIDRs never accepted from remotes. The operator appends the cluster's IPv4 pod and service networks automatically and ignores IPv6 ranges because the policy engine is IPv4-only. |
-| `underlayCIDRs` | IPv4 transport networks used between nodes and the local SCION AS. These are always excluded from learned SCION routes to prevent recursive tunneling and keep registrar/discovery traffic reachable. |
+| `underlayCIDRs` | Required IPv4 transport networks used between nodes and the local SCION AS. Always excluded from learned SCION routes to keep bootstrap, registrar, probes, and border-router traffic outside the tunnel. |
 
 ### spec.dataplane (optional)
 
@@ -192,10 +198,12 @@ oc get scionnetwork cluster            # ISD-AS and Ready columns populate
 oc get scionnetwork cluster -o jsonpath='{.status.conditions}' | jq
 oc -n scion-system rollout status ds/scion-node-agent
 oc debug node/<node> -- chroot /host ip route get <remote-scion-ip>
+oc debug node/<node> -- chroot /host ip route get <discovery-or-registrar-ip>
 ```
 
 Expect `Available=True`, `Progressing=False`, `Degraded=False`,
-`status.isdAS` set, `status.nodes.ready == status.nodes.total`, and the route
-to a learned remote prefix selecting `scion0`. Agent metrics are scraped on
-port 9465; alerts `ScionNodeAgentDown`, `ScionNodeAgentAbsent`, and
+`status.isdAS` set, `status.nodes.ready == status.nodes.total`, a learned
+remote prefix selecting `scion0`, and every discovery/registrar/underlay
+destination selecting the normal interface. Agent metrics are scraped on port
+9465; alerts `ScionNodeAgentDown`, `ScionNodeAgentAbsent`, and
 `ScionNetworkDegraded` are defined in `config/manifests/monitoring.yaml`.

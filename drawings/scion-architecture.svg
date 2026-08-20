@@ -1,85 +1,67 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="940" height="490" viewBox="0 0 940 490" font-family="Inter, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="610" viewBox="0 0 980 610" font-family="Inter, Helvetica, Arial, sans-serif">
   <defs>
-    <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L8,3 L0,6 z" fill="#475569"/>
-    </marker>
+    <marker id="gray" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#475569"/></marker>
+    <marker id="green" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#16a34a"/></marker>
+    <marker id="purple" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 z" fill="#7c3aed"/></marker>
   </defs>
+  <rect width="980" height="610" fill="#ffffff"/>
+  <text x="490" y="28" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">scion-k8s-operator — as-built component architecture</text>
 
-  <text x="470" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#1e293b">Component architecture</text>
+  <rect x="25" y="48" width="650" height="515" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="42" y="72" font-size="13" font-weight="600" fill="#64748b">OpenShift / Kubernetes cluster</text>
 
-  <!-- cluster boundary -->
-  <rect x="30" y="45" width="600" height="395" rx="12" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="6 4"/>
-  <text x="45" y="68" font-size="13" font-weight="600" fill="#64748b">OpenShift / Kubernetes cluster</text>
+  <rect x="50" y="92" width="245" height="78" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
+  <text x="172" y="115" text-anchor="middle" font-size="13" font-weight="600" fill="#991b1b">ScionNetwork / cluster</text>
+  <text x="172" y="135" text-anchor="middle" font-size="10" fill="#991b1b">bootstrap · advertisement · acceptPolicy</text>
+  <text x="172" y="152" text-anchor="middle" font-size="10" fill="#991b1b">underlayCIDRs · registrar · scheduling</text>
 
-  <!-- CRD -->
-  <rect x="60" y="90" width="200" height="60" rx="8" fill="#fee2e2" stroke="#dc2626" stroke-width="1.5"/>
-  <text x="160" y="115" text-anchor="middle" font-size="13" font-weight="600" fill="#991b1b">ScionNetwork CRD</text>
-  <text x="160" y="134" text-anchor="middle" font-size="11" fill="#991b1b">cluster-scoped singleton</text>
+  <rect x="50" y="195" width="245" height="92" rx="8" fill="#fff7ed" stroke="#f97316" stroke-width="1.5"/>
+  <text x="172" y="219" text-anchor="middle" font-size="12" font-weight="600" fill="#9a3412">platform prerequisites (read-only)</text>
+  <text x="172" y="240" text-anchor="middle" font-size="10" fill="#9a3412">Network: routingViaHost = true</text>
+  <text x="172" y="258" text-anchor="middle" font-size="10" fill="#9a3412">RouteAdvertisements: Accepted</text>
+  <text x="172" y="275" text-anchor="middle" font-size="10" fill="#9a3412">default PodNetwork advertised</text>
 
-  <!-- operator -->
-  <rect x="330" y="90" width="270" height="88" rx="8" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
-  <text x="465" y="113" text-anchor="middle" font-size="13" font-weight="600" fill="#92400e">scion-operator (Deployment)</text>
-  <text x="465" y="132" text-anchor="middle" font-size="11" fill="#92400e">reconciles DaemonSet, RBAC, SCC</text>
-  <text x="465" y="148" text-anchor="middle" font-size="11" fill="#92400e">status conditions, isdAS</text>
-  <text x="465" y="164" text-anchor="middle" font-size="11" fill="#92400e">registrar controller (manual | http | anapaya)</text>
+  <rect x="350" y="92" width="285" height="195" rx="9" fill="#fef3c7" stroke="#d97706" stroke-width="1.5"/>
+  <text x="492" y="117" text-anchor="middle" font-size="13" font-weight="600" fill="#92400e">scion-operator Deployment</text>
+  <text x="492" y="141" text-anchor="middle" font-size="10" fill="#92400e">reconcile DaemonSet · ServiceAccount · RBAC · SCC</text>
+  <text x="492" y="160" text-anchor="middle" font-size="10" fill="#92400e">observe OVN prerequisites; never mutate OVN</text>
+  <text x="492" y="179" text-anchor="middle" font-size="10" fill="#92400e">Available · Progressing · Degraded · node summary</text>
+  <text x="492" y="198" text-anchor="middle" font-size="10" fill="#92400e">register current node SIG set; finalizer cleanup</text>
+  <rect x="373" y="220" width="238" height="43" rx="6" fill="#fffbeb" stroke="#f59e0b"/>
+  <text x="492" y="238" text-anchor="middle" font-size="10" font-weight="600" fill="#92400e">static install manifests</text>
+  <text x="492" y="253" text-anchor="middle" font-size="9" fill="#92400e">ServiceMonitor · PrometheusRule · namespace</text>
 
-  <line x1="260" y1="120" x2="325" y2="120" stroke="#475569" stroke-width="2" marker-end="url(#arrow2)"/>
-  <text x="292" y="112" text-anchor="middle" font-size="10" fill="#64748b">watches</text>
+  <line x1="295" y1="131" x2="345" y2="131" stroke="#475569" stroke-width="2" marker-end="url(#gray)"/><text x="320" y="122" text-anchor="middle" font-size="9" fill="#64748b">watches</text>
+  <line x1="295" y1="241" x2="345" y2="190" stroke="#f97316" stroke-width="2" marker-end="url(#gray)"/><text x="315" y="210" text-anchor="middle" font-size="9" fill="#9a3412">observes</text>
 
-  <!-- daemonset agents -->
-  <rect x="60" y="215" width="540" height="200" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
-  <text x="330" y="238" text-anchor="middle" font-size="13" font-weight="600" fill="#166534">scion-node-agent DaemonSet &#8212; every node, hostNetwork, NET_ADMIN</text>
+  <rect x="50" y="326" width="585" height="205" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="342" y="350" text-anchor="middle" font-size="13" font-weight="600" fill="#166534">scion-node-agent DaemonSet — every selected node</text>
+  <text x="342" y="369" text-anchor="middle" font-size="10" fill="#166534">hostNetwork · privileged/root on RHCOS · system-node-critical</text>
+  <rect x="70" y="390" width="155" height="62" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="147" y="412" text-anchor="middle" font-size="11" font-weight="600" fill="#166534">bootstrap</text><text x="147" y="430" text-anchor="middle" font-size="9" fill="#166534">URL · DNS · DHCP · mDNS</text><text x="147" y="444" text-anchor="middle" font-size="9" fill="#166534">topology + TRCs + pins</text>
+  <rect x="240" y="390" width="155" height="62" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="317" y="412" text-anchor="middle" font-size="11" font-weight="600" fill="#166534">daemon</text><text x="317" y="430" text-anchor="middle" font-size="9" fill="#166534">paths + trust in-process</text><text x="317" y="444" text-anchor="middle" font-size="9" fill="#166534">standard API :30255</text>
+  <rect x="410" y="390" width="205" height="62" rx="6" fill="#dcfce7" stroke="#16a34a"/>
+  <text x="512" y="412" text-anchor="middle" font-size="11" font-weight="600" fill="#166534">embedded SIG</text><text x="512" y="430" text-anchor="middle" font-size="9" fill="#166534">scion0 · SGRP · exact learned routes</text><text x="512" y="444" text-anchor="middle" font-size="9" fill="#166534">source preserved · no SNAT</text>
+  <line x1="225" y1="421" x2="235" y2="421" stroke="#475569" marker-end="url(#gray)"/><line x1="395" y1="421" x2="405" y2="421" stroke="#475569" marker-end="url(#gray)"/>
+  <rect x="70" y="472" width="545" height="40" rx="6" fill="#ecfdf5" stroke="#86efac"/>
+  <text x="342" y="489" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">guardrails: cluster + service + forbidden + underlay CIDRs never select scion0</text>
+  <text x="342" y="503" text-anchor="middle" font-size="9" fill="#166534">advertise pod CIDR · optional safe node IP · normal routes remain untouched</text>
+  <line x1="492" y1="287" x2="492" y2="321" stroke="#475569" stroke-width="2" marker-end="url(#gray)"/><text x="504" y="310" font-size="9" fill="#64748b">manages</text>
 
-  <!-- one node agent expanded -->
-  <g>
-    <rect x="80" y="255" width="480" height="140" rx="8" fill="#dcfce7" stroke="#16a34a"/>
-    <text x="320" y="276" text-anchor="middle" font-size="12" font-weight="600" fill="#166534">per-node agent (SCION endhost stack)</text>
-    <rect x="95" y="290" width="130" height="42" rx="5" fill="#bbf7d0" stroke="#16a34a"/>
-    <text x="160" y="308" text-anchor="middle" font-size="11" fill="#166534">bootstrap</text>
-    <text x="160" y="323" text-anchor="middle" font-size="10" fill="#166534">topology + TRCs</text>
-    <rect x="245" y="290" width="140" height="42" rx="5" fill="#bbf7d0" stroke="#16a34a"/>
-    <text x="315" y="308" text-anchor="middle" font-size="11" fill="#166534">daemon module</text>
-    <text x="315" y="323" text-anchor="middle" font-size="10" fill="#166534">paths, trust, :30255</text>
-    <rect x="405" y="290" width="140" height="42" rx="5" fill="#bbf7d0" stroke="#16a34a"/>
-    <text x="475" y="308" text-anchor="middle" font-size="11" fill="#166534">gateway (SIG)</text>
-    <text x="475" y="323" text-anchor="middle" font-size="10" fill="#166534">scion0 tun, SGRP</text>
-    <line x1="225" y1="311" x2="240" y2="311" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow2)"/>
-    <line x1="385" y1="311" x2="400" y2="311" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow2)"/>
-    <rect x="95" y="345" width="450" height="34" rx="5" fill="#f0fdf4" stroke="#16a34a" stroke-dasharray="4 3"/>
-    <text x="320" y="366" text-anchor="middle" font-size="11" fill="#166534">host routes: remote SCION prefixes &#8594; scion0 &#183; advertises pod CIDR + node IP</text>
-  </g>
+  <rect x="705" y="70" width="245" height="420" rx="11" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="827" y="95" text-anchor="middle" font-size="13" font-weight="600" fill="#5b21b6">local SCION AS infrastructure</text>
+  <rect x="725" y="120" width="205" height="52" rx="6" fill="#ede9fe" stroke="#7c3aed"/><text x="827" y="141" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">discovery service</text><text x="827" y="158" text-anchor="middle" font-size="9" fill="#5b21b6">topology.json + TRCs</text>
+  <rect x="725" y="190" width="205" height="58" rx="6" fill="#ede9fe" stroke="#7c3aed"/><text x="827" y="212" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">scion-registrar</text><text x="827" y="229" text-anchor="middle" font-size="9" fill="#5b21b6">PUT /v1/sigs · patch + SIGHUP</text><text x="827" y="241" text-anchor="middle" font-size="8" fill="#7c3aed">manual | HTTP | Anapaya stub</text>
+  <rect x="725" y="268" width="205" height="52" rx="6" fill="#ede9fe" stroke="#7c3aed"/><text x="827" y="289" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">control service</text><text x="827" y="306" text-anchor="middle" font-size="9" fill="#5b21b6">paths · trust · SIG discovery</text>
+  <rect x="725" y="340" width="205" height="52" rx="6" fill="#ede9fe" stroke="#7c3aed"/><text x="827" y="361" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">border router</text><text x="827" y="378" text-anchor="middle" font-size="9" fill="#5b21b6">node ↔ inter-AS data plane</text>
+  <ellipse cx="827" cy="445" rx="100" ry="27" fill="#ddd6fe" stroke="#7c3aed"/><text x="827" y="450" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">SCION network</text>
 
-  <line x1="465" y1="178" x2="465" y2="210" stroke="#475569" stroke-width="2" marker-end="url(#arrow2)"/>
-  <text x="478" y="199" font-size="10" fill="#64748b">manages</text>
+  <path d="M635 175 C675 175 685 220 720 220" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#gray)"/><text x="678" y="190" font-size="9" fill="#64748b">registrar API</text>
+  <path d="M70 421 L35 421 L35 545 L682 545 L682 146 L720 146" fill="none" stroke="#475569" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#gray)"/><text x="600" y="539" font-size="9" fill="#64748b">HTTP bootstrap</text>
+  <path d="M615 421 C665 421 675 366 720 366" fill="none" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#purple)"/><text x="665" y="406" font-size="9" fill="#5b21b6">SCION/UDP</text>
+  <line x1="827" y1="392" x2="827" y2="416" stroke="#7c3aed" stroke-width="2" marker-end="url(#purple)"/>
 
-  <!-- AS infrastructure -->
-  <rect x="680" y="90" width="230" height="230" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
-  <text x="795" y="115" text-anchor="middle" font-size="13" font-weight="600" fill="#5b21b6">SCION AS infrastructure</text>
-  <rect x="700" y="128" width="190" height="42" rx="6" fill="#ddd6fe" stroke="#7c3aed"/>
-  <text x="795" y="146" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">control service</text>
-  <text x="795" y="162" text-anchor="middle" font-size="10" fill="#5b21b6">paths, TRCs, gateway discovery</text>
-  <rect x="700" y="180" width="190" height="42" rx="6" fill="#ddd6fe" stroke="#7c3aed"/>
-  <text x="795" y="198" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">border router</text>
-  <text x="795" y="214" text-anchor="middle" font-size="10" fill="#5b21b6">data plane: node &#8596; other ASes</text>
-  <rect x="700" y="232" width="190" height="46" rx="6" fill="#ddd6fe" stroke="#7c3aed"/>
-  <text x="795" y="250" text-anchor="middle" font-size="11" font-weight="600" fill="#5b21b6">scion-registrar</text>
-  <text x="795" y="266" text-anchor="middle" font-size="10" fill="#5b21b6">patches topology.json sigs, SIGHUP</text>
-  <text x="795" y="302" text-anchor="middle" font-size="10" fill="#5b21b6">(OSS AS &#183; Anapaya EDGE &#183; SCIONLab)</text>
-
-  <!-- registrar sync -->
-  <line x1="600" y1="140" x2="695" y2="248" stroke="#475569" stroke-width="2" marker-end="url(#arrow2)"/>
-  <text x="636" y="168" font-size="10" fill="#64748b">PUT /v1/sigs</text>
-
-  <!-- dataplane: agent -> border router -->
-  <line x1="560" y1="340" x2="695" y2="208" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arrow2)"/>
-  <text x="650" y="296" font-size="10" fill="#166534" font-weight="600" transform="rotate(-44 650 296)">SCION over UDP</text>
-
-  <!-- SCION cloud -->
-  <ellipse cx="795" cy="415" rx="120" ry="40" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
-  <text x="795" y="413" text-anchor="middle" font-size="13" font-weight="600" fill="#5b21b6">SCION network</text>
-  <text x="795" y="431" text-anchor="middle" font-size="11" fill="#5b21b6">other ISDs / ASes</text>
-
-  <!-- BR -> cloud -->
-  <line x1="795" y1="322" x2="795" y2="373" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow2)"/>
-  <text x="807" y="352" font-size="10" fill="#5b21b6">inter-AS links</text>
+  <rect x="120" y="575" width="740" height="24" rx="12" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="490" y="591" text-anchor="middle" font-size="10" fill="#1d4ed8">Ownership boundary: operator/agent own scion0 and Kubernetes dependents; OVN and AS routing remain administrator-owned</text>
 </svg>

@@ -9,11 +9,13 @@ success; the first failure prints `FAILED phase: <phase>` and exits non-zero.
 
 - An OpenShift cluster; `oc` logged in (or `KUBECONFIG` set) with
   cluster-admin.
-- A dev SCION AS reachable **from the cluster nodes** (not just from your
-  workstation). See `hack/dev-scion-topology/README.md` for a two-AS dev
-  topology and the bundled discovery server (`serve-discovery.py`).
-- The registrar service (`cmd/registrar`) running next to that AS's control
-  service, with `REGISTRAR_TOKEN` set on the service side.
+- A path-conclusive dev SCION AS reachable **from the cluster nodes**. The
+  validated environment is the
+  [`metal3-dev-scripts/scion-topology`](https://github.com/mkowalski/metal3-dev-scripts/tree/scion-topology/scion)
+  feature. `hack/dev-scion-topology` is suitable for component development but
+  does not install the underlay-bypass guard.
+- The registrar service (`cmd/registrar`) running beside that AS's control
+  service, with `REGISTRAR_TOKEN` set AS-side.
 - Operator and agent images pushed to a registry the cluster can pull, and
   the manifests pointing at them. Two image knobs:
   - operator image: `spec.template.spec.containers[].image` in
@@ -27,6 +29,8 @@ success; the first failure prints `FAILED phase: <phase>` and exits non-zero.
   `routingViaHost: true`, `routeAdvertisements: Enabled`, and an accepted
   default-network `RouteAdvertisements` resource advertising `PodNetwork`.
   The suite checks these settings before creating the `ScionNetwork`.
+- The node-to-AS network supplied as `UNDERLAY_CIDR`; the suite writes it to
+  `acceptPolicy.underlayCIDRs` and verifies it does not select `scion0`.
 
 ## Environment variables
 
@@ -38,7 +42,7 @@ success; the first failure prints `FAILED phase: <phase>` and exits non-zero.
 | `REGISTRAR_TOKEN` | same as `REGISTRAR_URL`                      | Bearer token for the registrar |
 | `REMOTE_PING_IP`  | `assert_dataplane`, `churn`, `undeploy`      | An IP behind the remote SIG |
 | `UNDERLAY_CIDR`   | optional (`configure`)                       | Cluster-to-AS transport CIDR excluded from learned SCION routes (default `192.168.111.0/24`) |
-| `REMOTE_SSH`      | `assert_dataplane`                           | SSH destination on the remote side; used to verify the underlay guard, capture the inner source addresses, and initiate inbound traffic. Set to `local` when running the suite on the AS host itself |
+| `REMOTE_SSH`      | `assert_dataplane`                           | SSH destination on the remote side for guard inspection, `sigb` captures, and inbound traffic. Set to `local` when running on the AS host. |
 | `REMOTE_TCP_PORT` | optional                                     | TCP test endpoint behind the remote SIG (default `18080`) |
 | `NON_SCION_IP`    | optional                                     | Control destination that must keep its normal route (default `1.1.1.1`) |
 | `TEST_IMAGE`      | optional                                     | Test pod image (default `registry.fedoraproject.org/fedora-toolbox:latest` — chosen because its iputils `ping` works unprivileged via ICMP datagram sockets; ubi-minimal/ubi/fedora base images ship no `ping`, and busybox `ping` needs raw sockets. The image must also provide `curl`) |
@@ -85,8 +89,9 @@ assert_registration churn undeploy`.
   `REGISTRAR_TOKEN` env of the registrar service. The operator surfaces this
   in `status.registrar.lastError`.
 - **Outbound traffic fails but agents are Ready**: confirm `routingViaHost`
-  and route advertisements with `oc get network.operator cluster -o yaml`
-  and `oc get routeadvertisements.k8s.ovn.org -o yaml`; then check that the
-  remote AS accepted SIG registration and UDP 30056/30256/30856 is open
-  node↔AS in both directions. The dataplane phase rejects a direct-underlay
-  false positive and captures the pod and node source addresses on `sigb`.
+  and route advertisements, then verify `acceptPolicy.underlayCIDRs` contains
+  the node-to-AS transport network. Check registrar state and UDP
+  30056/30256/30856 reachability in both directions. The dataplane phase
+  rejects direct-underlay false positives, verifies ordinary and underlay
+  destinations avoid `scion0`, and captures the exact pod and kernel-selected
+  host sources on `sigb`.

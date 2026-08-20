@@ -1,7 +1,8 @@
 # SCION Kubernetes Operator — Design
 
 Date: 2026-07-23
-Status: Draft for review
+Updated: 2026-08-20
+Status: Implemented and live-validated
 Repo: github.com/mkowalski/scion-k8s-operator
 
 ## 1. Goal
@@ -11,12 +12,10 @@ transparent, bidirectional IP-over-SCION connectivity, delivered as a
 Kubernetes operator. OpenShift 5.x is the primary target; a clean path to
 vanilla Kubernetes is preserved but not implemented in v1.
 
-Note: the platform research backing this design (SCC behavior, OVN-K
-shared-gateway SNAT, user-workload monitoring, MCO alternatives) was
-validated against OpenShift 4.x documentation and code. These mechanisms
-are expected to carry over to 5.x, but each assumption must be
-re-verified against 5.x during implementation; divergences (e.g.
-bootc-based RHCOS changes) are handled in the implementation plan.
+The architecture below is the as-built v0.1 design. OpenShift 5.0/RHCOS 10.2,
+OVN-Kubernetes local-gateway routing, source preservation, SCION v0.15.1,
+registrar lifecycle, and the two-AS development topology were validated live
+on a five-node cluster on 2026-08-20.
 
 "First-class endhost" means each node:
 
@@ -39,35 +38,28 @@ existing host-to-pod path.
 
 ## 2. Background and key research findings
 
-- Modern SCION (v0.15+, post dispatcher removal) endhost stack is minimal:
-  `scion-daemon` + `topology.json` + TRCs. Pure Go, userspace, UDP-only,
-  no kernel modules, no per-host secrets. Apps bind plain UDP sockets in
-  the AS `dispatched_ports` range.
-- The SCION-IP Gateway is fully open source in `scionproto/scion`
-  (`gateway/`): tun device, IP-in-SCION framing, SGRP prefix exchange,
-  route programming. Anapaya GATE is a commercial hardened variant.
-- Endhost bootstrapping is solved upstream (`netsec-ethz/bootstrapper`):
-  discovery via explicit URL, DNS-SD/SRV, DHCP option 72, or mDNS; fetch
-  `topology.json` + TRCs over HTTP(S).
-- No production SCION/Kubernetes integration exists anywhere; this is
-  greenfield. Closest prior art for the per-node pattern: Submariner
-  route-agent, kilo, Tailscale on k8s.
-- SCION requires nothing kernel-level, so no MachineConfig, no RHCOS
-  layering, no reboots: a privileged/NET_ADMIN hostNetwork DaemonSet
-  suffices.
-- AS attachment works with both commercial Anapaya EDGE appliances and
-  self-run open-source ASes (control service + border router), including
-  the free SCIONLab testbed for development.
+- Modern SCION v0.15.1 endhosts are userspace components: topology/TRCs,
+  path/trust services, and UDP sockets; no kernel module or node reboot.
+- The open-source SCION-IP Gateway supplies tun creation, IP-in-SCION framing,
+  SGRP prefix exchange, and Linux route publication.
+- Endhost discovery supports URL, DNS-SRV, DHCP option 72, or mDNS and fetches
+  `topology.json` plus TRCs.
+- The per-node hostNetwork DaemonSet pattern is proven on OpenShift. Live RHCOS
+  testing requires privileged/root because SELinux blocks the narrower
+  capability-only host tun/state access.
+- Open-source ASes, Anapaya EDGE, and SCIONLab can supply the AS-side control
+  service and border router; the border router never moves into the node.
 
 ## 3. Architecture
 
-Two components, one repository, two container images:
+Three binaries and images share one repository:
 
-```
-scion-operator (Deployment, 1 replica, namespace scion-system)
-  watches:  ScionNetwork (cluster-scoped CRD, singleton "cluster")
-  manages:  scion-node-agent DaemonSet, SCC, ServiceAccount, RBAC,
-            ServiceMonitor, PrometheusRule, aggregated status
+```text
+scion-operator (Deployment, namespace scion-system)
+  watches: ScionNetwork, DaemonSet, Nodes, OpenShift Network,
+           OVN RouteAdvertisements
+  manages: scion-node-agent DaemonSet, agent RBAC/SCC, aggregate status
+  reads:   OVN source-preservation prerequisites (never mutates them)
         |
         v
 scion-node-agent (DaemonSet, every node, hostNetwork)
@@ -75,9 +67,12 @@ scion-node-agent (DaemonSet, every node, hostNetwork)
   | bootstrap      |  | daemon module  |  | gateway module (SIG)     |
   | topology + TRC |->| paths, trust,  |->| tun scion0 in host netns |
   | discovery      |  | gRPC :30255    |  | SGRP advertise/learn     |
-  +----------------+  +----------------+  | route programming        |
-                                          +--------------------------+
+  +----------------+  +----------------+  +--------------------------+
 ```
+
+`scion-registrar` is the third binary. It runs beside an open-source AS
+control service, not in the cluster, and atomically reconciles the
+operator-managed `sigs` set.
 
 The agent is a single Go binary embedding `scionproto/scion` packages
 (`daemon/`, `gateway/`) as libraries plus bootstrap logic modeled on
@@ -89,15 +84,14 @@ applications.
 
 Scaffolded with operator-sdk/kubebuilder (controller-runtime). Duties:
 
-- Reconcile the `ScionNetwork` singleton into: DaemonSet, ServiceAccount,
-  RBAC, SCC (OpenShift), monitoring objects. Repair drift.
-- Validate spec via CRD structural schema + CEL rules (no admission
-  webhook in v1).
-- Aggregate per-node agent health into `status.conditions`
-  (`Available`, `Progressing`, `Degraded` — ClusterOperator style) and a
-  per-node summary. On OpenShift the same conditions report whether OVN is in
-  local-gateway mode with source preservation enabled. No allocation status or
-  agent-written API state is required.
+- Reconcile the `ScionNetwork` singleton into the agent DaemonSet,
+  ServiceAccount, RBAC, and OpenShift SCC. Repair drift.
+- Validate spec via CRD structural schema + CEL rules.
+- Aggregate agent readiness, registrar state, and platform prerequisites into
+  `Available`, `Progressing`, and `Degraded`; publish the per-node summary and
+  discovered ISD-AS.
+- Observe `Network.operator.openshift.io/cluster` and accepted default-network
+  `PodNetwork` `RouteAdvertisements`; report failures without mutating either.
 - Handle upgrades: new operator version rolls the DaemonSet
   (RollingUpdate, maxUnavailable 10%).
 - Run the registrar controller: reconcile the AS-side SIG registration
@@ -114,44 +108,35 @@ version `v1alpha1` (group is user-controlled via GitHub Pages domain;
 revisit before any public release).
 
 `spec`:
-- `bootstrap`: mode (`url` | `dns` | `dhcp` | `mdns`), discovery URL,
-  optional secret ref for authenticated bootstrap (Anapaya deployments),
-  optional pinned TRCs, refresh interval.
-- `advertisement`: advertise pod CIDR (bool, default true), advertise
-  node IP (bool, default true).
-- `acceptPolicy`: allowed remote ISD-ASes and IP prefix filters for
-  learned routes.
-- `dataplane`: tun device name (default `scion0`), MTU overrides.
-- `registrar`: backend (`manual` | `http` | `anapaya`), endpoint URL,
-  credential secret ref (see 3.6).
-- `nodeSelector` / tolerations passthrough for the DaemonSet.
+- `bootstrap`: discovery mode (`url` | `dns` | `dhcp` | `mdns`), mode-specific
+  fields, optional pinned-TRC Secret, refresh interval.
+- `advertisement`: pod CIDR and node IP switches (both default true; node IP
+  must be disabled if it overlaps the underlay).
+- `acceptPolicy`: allowed remote ISD-ASes, user-forbidden IPv4 ranges, and
+  required node-to-AS `underlayCIDRs`.
+- `dataplane`: tun device name (default `scion0`).
+- `registrar`: backend (`manual` | `http` | `anapaya`), endpoint and Secret.
+- `nodeSelector`, tolerations, and agent image override.
 
 `status`:
 - `conditions`: Available, Progressing, Degraded.
-- `isdAs`: the ISD-AS the cluster is attached to.
-- `nodes`: readyCount, totalCount, degraded list with reasons.
-- `prefixes`: advertised count, learned count.
-- `registrar`: registered node count, desired SIG list (for `manual`
-  mode), last sync time/error.
+- `isdAS`: local ISD-AS for URL bootstrap mode.
+- `nodes`: ready, total, and unready-node names.
+- `registrar`: registered count, desired SIGs, last sync and last error.
 
 ### 3.3 Node agent
 
-- **Bootstrap module**: resolves AS attachment at startup and on a
-  refresh schedule. Order: explicit URL → DNS-SD/SRV → DHCP option 72 →
-  mDNS. Verifies TRC chains; caches under hostPath
-  `/var/lib/scion-node-agent`. Works identically against Anapaya EDGE
-  discovery endpoints and OSS ASes.
-- **Daemon module**: embedded sciond; sqlite path/trust caches on the
-  hostPath; gRPC on `127.0.0.1:30255`.
-- **Gateway module**: creates `scion0`; advertises the node pod CIDR (from
-  its own Node object `spec.podCIDRs`; node name via downward API) and optional
-  node IP via SGRP; learns remote prefixes via control-service gateway discovery
-  + SGRP filtered by `acceptPolicy`; and installs exactly those learned prefixes
-  as host routes through `scion0`.
-- **Route guardrails**: refuses to install prefixes overlapping
-  clusterNetwork, serviceNetwork, configured underlay transport networks, or
-  the default route. The agent does not install SNAT, policy-routing, eBPF, or
-  OVN rules, and never modifies `br-ex` or the OVN database.
+- **Bootstrap module**: discovers the local AS by URL, DNS-SRV, DHCP option 72,
+  or mDNS; fetches topology/TRCs; validates optional pinned TRCs; updates the
+  host cache atomically on a refresh schedule.
+- **Daemon module**: `NewStandaloneConnector` supplies in-process path and
+  trust services; the standard API remains available on `127.0.0.1:30255`.
+- **Gateway module**: creates `scion0`, advertises the pod CIDR and optional
+  node IP, learns exact remote prefixes through SGRP, and lets the upstream
+  route publisher install them.
+- **Route guardrails**: subtract cluster, service, user-forbidden, and
+  `underlayCIDRs` ranges from accepted IPv4 prefixes. The agent installs no
+  SNAT, policy routing, eBPF, or OVN state.
 
 ### 3.4 Traffic flow
 
@@ -167,17 +152,15 @@ revisit before any public release).
 
 ### 3.5 Security
 
-- Dedicated namespace `scion-system`.
-- Custom SCC: `hostNetwork`, capability `NET_ADMIN`, hostPath volumes
-  (`/var/lib/scion-node-agent`, `/dev/net/tun`), non-root with
-  capabilities preferred. Fallback to `privileged: true` only if SELinux
-  `container_t` blocks host tun access — validated during
-  implementation; both modes documented.
-- Agent RBAC: `get` on Nodes; nothing else cluster-scoped.
-- Secrets only when the AS requires authenticated bootstrap; plain SCION
-  endhosts hold no private keys. TRCs are public trust material.
-- DaemonSet: tolerations for all node roles, priorityClassName
-  `system-node-critical`.
+- Dedicated `scion-system` namespace with privileged PSA labels.
+- The live RHCOS result requires the agent to run privileged as root; the
+  operator manages the corresponding SCC. A narrower SELinux policy remains
+  future hardening.
+- Agent RBAC is read-only for its own Node data; operator Secret access is
+  namespaced to `scion-system`.
+- Bootstrap pins and registrar credentials are mounted read-only. Plain SCION
+  endhosts otherwise hold no private AS keys.
+- DaemonSet tolerates all node roles and uses `system-node-critical` priority.
 
 ### 3.6 AS-side auto-registration (registrar)
 
@@ -196,15 +179,14 @@ backend interface (backend selected in `spec.registrar`):
   infrastructure, outside the cluster). The registrar authenticates
   requests (token from a Secret), patches `sigs` in `topology.json`, and
   reloads the control service. Used by dev/e2e environments and OSS ASes.
-- `anapaya`: CRUDs gateway entries via the Anapaya appliance management
-  REST API (OpenAPI; a generated client exists in
-  `Anapaya/ansible-collections`), credential from a Secret. Developed
-  against a stub derived from the OpenAPI models until real appliance
-  access is available; planned for v1.x, interface defined in v1.
+- `anapaya`: declared integration boundary; currently returns
+  `ErrNotImplemented`. A real Appliance Management API backend requires
+  appliance access and is outside v0.1.
 
-Deregistration: registrar removes entries on node deletion; the
-registrar service additionally expires entries whose agent stops
-heartbeating (protects against unclean cluster removal).
+HTTP deregistration runs under a finalizer. Failures retry until the ten-minute
+deadline, after which the finalizer releases with a loud error to avoid wedging
+cluster deletion. The registrar reconciles the full set; it does not implement
+heartbeat expiry.
 
 In parallel, an upstream design proposal will be filed with
 `scionproto/scion` for TTL/heartbeat-based dynamic SIG self-registration
@@ -219,43 +201,36 @@ into one standard mechanism.
   install.
 - Distribution: OLM bundle (CSV) for OpenShift, plus plain
   kustomize manifests kept vanilla-Kubernetes-compatible.
-- Monitoring: OpenShift user-workload monitoring; ServiceMonitor +
-  PrometheusRule shipped by the operator. Agent and embedded SCION
-  components export Prometheus metrics natively; agent adds bootstrap
-  state, session health, advertised/learned prefix and route counts.
+- Monitoring: static ServiceMonitor and PrometheusRule manifests integrate
+  with OpenShift user-workload monitoring. Embedded SCION metrics plus agent
+  and operator health cover the implemented observability surface.
 - Upgrades independent of OCP upgrades.
 
 ## 5. Failure modes
 
-- Agent pod down: tun and routes vanish with the process; traffic to
-  remote prefixes fails closed (no fallback leak to plain IP). Routes
-  are cleaned on shutdown and stale ones reconciled on start using the
-  dedicated route protocol ID.
-- AS infrastructure unreachable: paths expire, SIG sessions drop; agent
-  retries, readiness goes false, Degraded condition and alert fire.
-- OVN-K upgrades/migrations: agent owns only `scion0` and its tagged
-  routes; no interaction with OVN-K state.
-- Upstream churn: `scionproto/scion` is pinned; internal `private/`
-  packages may move between releases; version bumps are gated by e2e.
-- Operator down: agents keep running (data plane unaffected); only
-  reconciliation/status pauses.
-- Registrar backend unreachable: existing registrations persist
-  (inbound keeps working for current nodes); new nodes get egress-only
-  connectivity until sync succeeds; Degraded condition and alert fire.
+- Agent pod down: `scion0` and learned routes vanish with the process; traffic
+  fails closed until the DaemonSet recreates the agent.
+- AS infrastructure unreachable: path/SIG discovery and registrar sync fail;
+  status and alerts surface the fault while existing agent processes remain.
+- Platform prerequisites missing: `Available=False` and `Degraded=True` with
+  `HostRoutingDisabled` or `SourcePreservationDisabled`; the operator does not
+  repair cluster-wide OVN configuration.
+- Underlay omitted from `acceptPolicy.underlayCIDRs`: learned routes can capture
+  discovery, registrar, probe, or border-router transport and deadlock the
+  attachment. Installation documentation treats the field as required.
+- Operator down: agents continue forwarding; reconciliation and status pause.
+- Registrar unavailable: current data-plane sessions continue, but new inbound
+  reachability and finalizer cleanup wait for sync or the deletion deadline.
 
 ## 6. Testing
 
-- Unit: route programming (mocked netlink), prefix guardrails, bootstrap
-  parsing/verification, SGRP advertisement composition, CRD validation,
-  registrar backends (HTTP registrar and Anapaya API stubbed).
-- Integration: docker-compose SCION topology (scionproto `tools/`) with
-  the agent in network namespaces; bidirectional ping/TCP between two
-  simulated nodes across the SCION topology; registrar service
-  patching `topology.json` and reloading the control service.
-- E2E: OpenShift cluster(s) in CI attached to a dev AS; verify pod↔pod
-  cross-cluster over SCION, inbound reachability, node reboot, node
-  add/remove with automatic (de)registration, agent and operator rolling
-  updates, guardrail enforcement, status aggregation.
+- Unit and envtest: bootstrap, policy subtraction, upstream parsers, rendered
+  resources, registrar behavior, status precedence, and platform detection.
+- Integration: discovery protocol and agent/gateway behavior in namespaces.
+- Live e2e: five-node OpenShift 5.0/RHCOS 10.2 with a two-AS SCION v0.15.1
+  topology. The hardened suite verifies exact `scion0` selection, ordinary and
+  underlay route exclusions, pod and host source preservation on remote `sigb`,
+  TCP, bidirectional ICMP, registration, pod replacement, and full cleanup.
   SCIONLab user-AS available for realistic manual testing.
 
 ## 7. Non-goals (v1)
@@ -271,22 +246,17 @@ into one standard mechanism.
 
 ## 8. Risks
 
-- SCION library surface: `gateway/` and `daemon/` internals are not a
-  stable public API; embedding may require forking or upstreaming
-  refactors. Mitigation: pin versions, minimize touched surface,
-  engage upstream early.
-- SELinux vs. non-privileged tun access on RHCOS: may force
-  `privileged: true` initially.
-- Per-node SIG scalability: N nodes × M remote SIGs sessions; SGRP fan-out
-  needs measurement at moderate cluster sizes.
-- Registrar: the HTTP registrar service is new AS-side infrastructure to
-  operate and secure; the Anapaya backend depends on an appliance API we
-  can only stub until real access exists (API observed at version 0.1.0,
-  may change); control-service topology reload behavior on `sigs`
-  changes must be validated.
-- AS-side registration friction with autoscaling node pools.
+- scionproto `private/` and gateway internals can change; versions are pinned
+  and bumps require local plus live validation.
+- Privileged root remains broader than desired; a tailored SELinux policy is
+  the path to capability-scoped operation.
+- Per-node SIG fan-out is N nodes × M remote gateways and needs scale testing.
+- The HTTP registrar is plaintext unless deployed behind a trusted tunnel or
+  TLS proxy; the Anapaya backend remains a stub.
+- Node-IP advertisement can recursively capture a single-NIC underlay. It must
+  remain disabled until overlap detection is implemented.
 
-## 9. Implementation deviations (as built)
+## 9. As-built notes and remaining deviations
 
 - Bootstrapper protocol corrections: TRC blobs are fetched from
   `/trcs/isd{I}-b{B}-s{S}/blob` (not `/trcs/<file>`), and TRCs are stored
@@ -302,9 +272,9 @@ into one standard mechanism.
 - Prefix guardrails are implemented as SGRP accept-policy prefix
   subtraction (forbidden CIDRs carved out of accepted prefixes); no
   custom netlink filtering layer.
-- Control-service topology reload on `sigs` changes was verified: SIGHUP
-  re-reads the file (v0.15.0 `private/topology/reload.go`); the registrar
-  defaults to `systemctl kill -s HUP scion-control`.
+- Control-service topology reload on `sigs` changes was verified on v0.15.1;
+  SIGHUP re-reads the file and the registrar defaults to
+  `systemctl kill -s HUP scion-control`.
 - The registrar's heartbeat-based entry expiry (§3) was replaced by
   full-set reconciliation on every PUT; unclean cluster removal can leave
   stale entries until the next sync or manual cleanup

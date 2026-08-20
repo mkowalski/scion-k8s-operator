@@ -8,12 +8,11 @@ upgrade, and source-preserving OVN-K e2e validation (2026-08-20).
 
 ## Retired by live e2e runs
 
-The full `test/e2e/e2e_test.sh` suite (deploy, configure, assert_agents,
-assert_dataplane, assert_registration, churn, undeploy) passed against a
-real 5-node OpenShift 5.x nightly (RHCOS 10.2, OVN-Kubernetes, baremetal
-dev-scripts) with a live SCION dev topology (scionproto v0.15.0 control
-service, border routers, discovery server, registrar, remote SIG). What
-this retired:
+Two full `test/e2e/e2e_test.sh` generations ran against a real five-node
+OpenShift 5.0/RHCOS 10.2 cluster. The first used SCION v0.15.0 and exposed the
+shared-gateway false positive. The final 2026-08-20 run used SCION v0.15.1,
+OVN local-gateway routing, default `PodNetwork` route advertisements,
+`underlayCIDRs`, and the hardened ten-container topology.
 
 - **Live dataplane** (was gap 1): tun creation, `NewStandaloneConnector`,
   SGRP prefix exchange both directions, kernel route programming, and
@@ -57,11 +56,12 @@ advertisement off, inbound ping source, printf bugs).
 ## New findings from the live runs — open design gaps
 
 The OVN-K shared-gateway gap is resolved for clusters that opt into the two
-documented platform prerequisites. The hardened 2026-08-20 suite proved that
-only the learned destination selects `scion0`, a non-SCION control destination
-keeps its normal route, direct underlay delivery is blocked, pod source
-addresses survive decapsulation, TCP and bidirectional ICMP work, churn restores
-the route, and undeploy removes tunnel and registration state.
+documented platform prerequisites and configure all node-to-AS networks in
+`acceptPolicy.underlayCIDRs`. The hardened suite proved that only the learned
+destination selects `scion0`, ordinary and underlay destinations keep normal
+routes, direct underlay delivery to the remote target is blocked, sources
+survive decapsulation, TCP and bidirectional ICMP work, churn restores the
+route, and undeploy removes tunnel and registration state.
 
 1. **Node-IP advertisement is unsafe when the node IP shares the SCION
    underlay network.** Advertising node /32s made the remote SIG route the

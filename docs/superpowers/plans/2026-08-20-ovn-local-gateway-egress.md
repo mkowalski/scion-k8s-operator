@@ -1,5 +1,9 @@
 # OVN-Kubernetes Source-Preserving SCION Egress Plan
 
+> **Completed 2026-08-20.** This is the execution record for commit `b5795b0`;
+> current operating instructions live in `docs/install.md` and
+> `test/e2e/README.md`.
+
 > **Execution:** implement tasks in order. The operator observes platform
 > prerequisites but never mutates cluster-wide OVN configuration.
 
@@ -33,18 +37,18 @@ those are cluster-wide routing decisions.
 
 ## Invariants
 
-1. The SCION gateway installs host routes only for prefixes learned from healthy
-   SGRP sessions. Those routes select `scion0`; all other destinations retain
-   their existing routes.
-2. The agent does not perform SNAT. Pod and host source addresses are unchanged
-   across encapsulation and visible unchanged after remote SIG decapsulation.
-3. Pod CIDRs are advertised through SGRP for return traffic. Node IP
-   advertisement remains explicit because it is unsafe when the same address is
-   also used by the SCION underlay.
-4. The operator owns no OVN objects and does not modify `br-ex`, OVS flows,
+1. The SCION gateway installs host routes only for prefixes learned from
+   healthy SGRP sessions. Those routes select `scion0`; all other destinations
+   retain their existing routes.
+2. `acceptPolicy.underlayCIDRs` subtracts every node-to-AS transport network
+   from accepted prefixes. Bootstrap, registrar, probes, and BR traffic remain
+   on the normal interface.
+3. The agent performs no SNAT. Pod and kernel-selected host sources survive
+   encapsulation and are visible unchanged after remote SIG decapsulation.
+4. Pod CIDRs are advertised for return traffic. Node-IP advertisement is
+   explicit because it is unsafe when that address also carries the underlay.
+5. The operator owns no OVN objects and does not modify `br-ex`, OVS flows,
    nftables, policy-routing rules, or node annotations.
-5. Existing inbound SCION behavior and node-local SCION daemon behavior remain
-   unchanged.
 
 ## Non-goals
 

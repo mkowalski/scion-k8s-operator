@@ -1,9 +1,11 @@
 # Research Notes: SCION Ecosystem and OpenShift Integration
 
-Research performed 2026-07 (pre-implementation), backing the design in
-`superpowers/specs/2026-07-23-scion-k8s-operator-design.md`. Sources: local
-clones of scionproto/scion (v0.15.0) and netsec-ethz/bootstrapper, GitHub org
-surveys, OpenShift 4.x documentation and openshift/* repositories.
+Research began in 2026-07 and was updated after implementation and live
+validation on 2026-08-20. It backs the design in
+`superpowers/specs/2026-07-23-scion-k8s-operator-design.md`. Sources include
+scionproto/scion v0.15.1, netsec-ethz/bootstrapper, OpenShift and
+OVN-Kubernetes source/documentation, and packet captures from the five-node
+`ostest` environment.
 
 ## Where the border router fits
 
@@ -37,7 +39,7 @@ Consequences:
   to keep nodes plain endhosts (no keys, no per-link peering; see
   decisions.md D14).
 
-## SCION endhost stack (scionproto/scion, v0.15.0+)
+## SCION endhost stack (scionproto/scion v0.15.1)
 
 - Post dispatcher-removal, a first-class endhost is minimal: **`scion-daemon`
   + `topology.json` + TRCs**. Pure Go, userspace, UDP-only underlay, no
@@ -64,9 +66,9 @@ Consequences:
   daemon API 30255/tcp localhost; legacy endhost 30041/udp.
 - Control service reloads `topology.json` on SIGHUP
   (`control/cmd/control/main.go` → `private/topology/reload.go`).
-- Builds: Bazel; releases ship deb/rpm tarballs (v0.15.0), no published
-  container images; distroless CI images only. Go 1.26, CGO-free, statically
-  linkable.
+- Releases ship deb/rpm tarballs but no general-purpose infrastructure image;
+  the dev topology therefore builds its own v0.15.1 image. The agent build
+  enables CGO because its embedded path/trust databases use go-sqlite3.
 
 ## Endhost bootstrapping (netsec-ethz/bootstrapper)
 
@@ -116,21 +118,21 @@ Consequences:
   networking (not our scope; every MC change reboots nodes). RHCOS image
   layering only for kernel-level needs (SCION has none). MC `extensions:` is
   a Red Hat-curated list — not usable for arbitrary RPMs.
-- SELinux: privileged pods run `spc_t`; capability-only pods run
-  `container_t`, which may block host `/dev/net/tun` — open risk, validate on
-  real RHCOS (we ship NET_ADMIN-only and document privileged fallback).
-- **OVN-Kubernetes interaction (corrected by live testing):** shared gateway
-  mode (`routingViaHost: false`) sends pod egress directly from OVS to `br-ex`
-  and bypasses host routes. Transparent SCION egress therefore requires local
-  gateway mode (`routingViaHost: true`). Preserving the pod source additionally
-  requires OVN route advertisements for the default `PodNetwork`; otherwise
-  local-gateway masquerade changes the source. The agent does not modify OVN,
-  `br-ex`, or nftables. On OVN-K, `node.spec.podCIDRs` may be empty and the
-  per-node subnet then lives in `k8s.ovn.org/node-subnets`.
+- **RHCOS security result:** capability-only `container_t` could not access the
+  host tun/state path. The shipped agent uses the operator-managed privileged
+  SCC and runs as root; a tailored SELinux policy remains future hardening.
+- **OVN-Kubernetes interaction (live-validated):** shared gateway mode
+  (`routingViaHost: false`) bypasses host routes. Transparent SCION egress
+  requires local gateway mode (`routingViaHost: true`), while source
+  preservation requires an accepted default-network `PodNetwork`
+  `RouteAdvertisements` resource. The operator observes both settings but
+  never mutates OVN. Learned SGRP routes are the sole selectors for `scion0`;
+  `acceptPolicy.underlayCIDRs` prevents discovery, registrar, and SCION
+  transport traffic from recursively entering the tunnel.
 - Monitoring: user-workload monitoring + ServiceMonitor/PrometheusRule.
   Caveat: platform kube-state-metrics metrics (e.g.
   `kube_daemonset_status_number_unavailable`) may not be visible to the UWM
   ruler — hence the additional `absent(up{...})`-based alert.
-- OpenShift 5.x is the stated target; all of the above was validated against
-  4.x docs/code and must be re-verified on 5.x (bootc-based RHCOS changes in
-  particular).
+- OpenShift 5.0/RHCOS 10.2 was validated live on a five-node OVN-K cluster.
+  The hardened suite proved pod and host-source preservation, TCP and ICMP,
+  bidirectional traffic, agent churn, registrar cleanup, and undeploy.

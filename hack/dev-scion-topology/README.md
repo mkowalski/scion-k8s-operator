@@ -1,7 +1,10 @@
 # Dev SCION topology
 
-Bring up a local multi-AS SCION topology to develop and integration-test the
-scion-node-agent against. Requires docker and python3 (scion.sh drives both).
+Bring up an upstream `scion.sh` topology for agent and discovery development.
+This is the lightweight local option; the path-conclusive OpenShift topology
+used by `test/e2e` lives on the `metal3-dev-scripts/scion-topology` branch and
+adds registrar lifecycle, underlay exclusion, a remote SIG/TCP target, and
+false-positive guards.
 
 ## Start the topology
 
@@ -15,6 +18,10 @@ cd scion
 `tiny.topo` creates ISD 1 with ASes `1-ff00:0:110` (core), `1-ff00:0:111`,
 and `1-ff00:0:112`, with all control services and routers on localhost.
 Stop with `./scion.sh stop`.
+
+This topology does not configure OVN-Kubernetes, `underlayCIDRs`, or the remote
+`inet scion-e2e` guard. Use it for component development, not as evidence that
+OpenShift pod traffic crossed SCION.
 
 ## Generated artifacts (layout)
 
@@ -47,7 +54,7 @@ Serve AS `1-ff00:0:112`'s artifacts on port 8041:
     8041
 ```
 
-Then point the agent at it:
+Then point a locally run agent at it (values depend on the generated AS):
 
 ```sh
 SCION_DISCOVERY_URL=http://127.0.0.1:8041 \
@@ -55,6 +62,10 @@ SCION_LOCAL_PREFIXES=10.42.0.0/24 \
 SCION_NODE_IP=127.0.0.1 \
 ./bin/agent
 ```
+
+For the full OpenShift lifecycle use `test/e2e/README.md`; its
+`UNDERLAY_CIDR` must contain every discovery, registrar, probe, and local-AS
+transport address.
 
 See `test/integration/agent_test.sh` for a full two-namespace end-to-end run
 and `test/integration/discovery_test.sh` for a topology-free protocol check

@@ -14,11 +14,11 @@ sites can reach node/pod IPs. Rejected narrower scopes: SCION-native-apps-only
 
 ## D2: Every node runs the full endhost stack — no dedicated gateway nodes
 
-Each node runs its own micro-SIG advertising its own pod CIDR + node IP.
-Rejected: Submariner-style gateway/route-agent split and virtual-SIG VIPs
-(SIG sessions are stateful point-to-point with per-node prefixes; a VIP
-breaks session affinity; gateway subsets add an intra-cluster hop and a
-special node role).
+Each node runs its own micro-SIG, advertising its pod CIDR and, only when
+explicitly enabled and safe, its node IP. Rejected: Submariner-style dedicated
+gateway nodes and virtual-SIG VIPs. SIG sessions are stateful point-to-point
+with per-node prefixes; a VIP breaks session affinity and gateway subsets add
+an intra-cluster hop and special node role.
 
 ## D3: Single custom Go agent embedding scionproto libraries (Approach C)
 
@@ -54,14 +54,12 @@ main), enabled by default via `SCION_ENABLE_DAEMON_API`.
 
 ## D7: Guardrails as SGRP accept-policy prefix subtraction
 
-The gateway routing-policy language has no "except" syntax, so "accept
-everything except cluster/service/machine CIDRs and default routes" is
-computed by subtracting forbidden CIDRs from 0.0.0.0/0 (recursive halving into
-a covering prefix set), validated by round-trip tests against the real
-upstream parsers. No custom netlink code; route programming stays inside
-`gateway.Run`. IPv4-only by design; the operator ignores IPv6 cluster/service
-ranges when constructing this IPv4 policy. Empty forbidden set is rejected
-(fail-safe).
+The gateway routing-policy language has no "except" syntax, so accepted
+remote ranges are split around cluster, service, user-forbidden, and
+node-to-AS underlay CIDRs. The generated rules are validated with the upstream
+parser; route programming remains inside `gateway.Run`. IPv4-only by design:
+IPv6 cluster/service ranges are omitted from this IPv4 policy. An empty
+forbidden set is rejected fail-safe.
 
 ## D8: AS-side auto-registration via pluggable registrar
 
@@ -137,13 +135,13 @@ consults host routes. Transparent pod egress therefore requires
 mutates the cluster-wide Network configuration.
 
 The existing SCION gateway remains the sole route publisher. Only prefixes
-learned through healthy SGRP sessions select `scion0`; all other
-traffic keeps its normal route. The agent does not allocate egress identities
-or install SNAT: pod and host source addresses remain unchanged. On OVN-K,
-source preservation additionally requires an accepted default-network
-`PodNetwork` RouteAdvertisements configuration. Node-to-AS transport networks
-must be listed in `acceptPolicy.underlayCIDRs` so discovery, registration, and
-SCION control traffic cannot recursively enter the tunnel.
+learned through healthy SGRP sessions select `scion0`; all other traffic keeps
+its normal route. The agent allocates no egress identity and installs no SNAT:
+the source chosen by the kernel survives encapsulation. On OVN-K, preserving
+pod sources requires an accepted default-network `PodNetwork`
+`RouteAdvertisements` configuration. Node-to-AS transport networks must be
+listed in `acceptPolicy.underlayCIDRs` so discovery, registration, and SCION
+control traffic cannot recursively enter the tunnel.
 
 Rejected: APBER, because it redirects all external traffic for selected
 namespaces rather than matching learned SCION destinations; BGP redistribution

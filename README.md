@@ -42,8 +42,9 @@ endhosts, not routers.
 
 After the operator is deployed and a `ScionNetwork` is configured, each node
 bootstraps against the local SCION AS, brings up a `scion0` tun device, and
-exchanges prefixes with remote gateways. The abstraction is as if the SCION
-gateway appliance was moved inside the node:
+exchanges prefixes with remote gateways. Linux routes learned through SGRP
+select SCION destinations; ordinary and node-to-AS underlay traffic keeps its
+normal route.
 
 <img src="drawings/scion-description.svg" alt="Overview: external SIG vs in-node SCION stack" style="width: 90%; max-width: 800px;">
 
@@ -88,15 +89,18 @@ spec:
   acceptPolicy:
     isdASes:
       - 1-ff00:0:110
+    underlayCIDRs:
+      - 192.168.111.0/24  # node-to-AS transport; edit for your network
 ```
 
 Requirements: a SCION AS (open-source control service + border router,
 Anapaya EDGE, or a [SCIONLab](https://www.scionlab.org) user AS) reachable
-from the nodes — the AS's **border router** is the only thing nodes need
-data-plane connectivity to, with UDP 30056/30256/30856 open between nodes
-and the AS infrastructure — and the node SIGs registered AS-side —
-automatically via the bundled registrar, or manually
-(see [docs/as-registration.md](docs/as-registration.md)).
+from the nodes; UDP 30056/30256/30856 open between nodes and the AS
+infrastructure; every node-to-AS transport network listed in
+`acceptPolicy.underlayCIDRs`; and the node SIGs registered AS-side,
+automatically via the bundled registrar or manually
+([docs/as-registration.md](docs/as-registration.md)). OpenShift OVN-K also
+requires the two settings described above.
 
 ## Check the documentation
 

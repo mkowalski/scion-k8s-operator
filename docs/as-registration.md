@@ -16,6 +16,11 @@ The actual inbound packets arrive at the AS **border router**, which
 delivers them as plain UDP to the registered node's SIG data port — so the
 border router must be able to reach every node on UDP 30056/30256/30856.
 
+The node-to-AS subnet must also appear in
+`spec.acceptPolicy.underlayCIDRs`. Otherwise a remote SGRP advertisement can
+capture the registrar or control-service endpoint itself, making registration
+and finalizer cleanup recursively depend on the tunnel they manage.
+
 ## Manual backend (default)
 
 The operator only publishes the desired set; the AS operator applies it.
@@ -106,6 +111,9 @@ Cluster-side configuration:
 
 ```yaml
 spec:
+  acceptPolicy:
+    underlayCIDRs:
+      - 192.168.111.0/24  # contains the registrar/control-service endpoint
   registrar:
     backend: http
     endpoint: http://as-host:8642

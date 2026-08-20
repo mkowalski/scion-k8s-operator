@@ -1,5 +1,12 @@
 # SCION Kubernetes Operator Implementation Plan
 
+> **Archived implementation record.** This plan captures the pre-build
+> assumptions and intentionally retains obsolete v0.15.0 snippets and unchecked
+> task boxes. The as-built system uses SCION v0.15.1 and is documented in the
+> [current design](../specs/2026-07-23-scion-k8s-operator-design.md),
+> [installation guide](../../install.md), and
+> [handoff](../../handoff.md). Do not use this file as an operational runbook.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make every OpenShift node a first-class SCION endhost with transparent bidirectional IP-over-SCION, delivered as an operator-managed per-node agent, per `docs/superpowers/specs/2026-07-23-scion-k8s-operator-design.md`.

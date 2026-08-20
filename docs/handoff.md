@@ -15,8 +15,8 @@ every major choice is in `decisions.md`; open problems in `known-gaps.md`.
 
 | Repo | Branch | State |
 |---|---|---|
-| github.com/mkowalski/scion-k8s-operator | `main` | v0.1.0 complete + live-e2e fixes merged; SCION library upgraded to v0.15.1. Operator, agent, registrar, CRD, manifests, OLM bundle, tests, docs. |
-| github.com/mkowalski/metal3-dev-scripts (fork of openshift-metal3/dev-scripts) | `scion-topology` | `ENABLE_SCION_AS` feature: two-AS SCION v0.15.1 topology on the hypervisor (9 podman containers, locally-built image, templated topologies, testcrypto trust material, discovery server, registrar). Fully validated live on v0.15.0; the v0.15.1 image build and binary smoke checks pass. NOT PR'd upstream (needs explicit approval). Plan: `docs/superpowers/plans/2026-07-24-scion-topology.md` in that repo, all tasks checked. |
+| github.com/mkowalski/scion-k8s-operator | `main` | Source-preserving OVN-K egress and hardened live e2e are complete on commit `b5795b0`; SCION v0.15.1. Operator, agent, registrar, CRD, manifests, OLM bundle, tests, docs. |
+| github.com/mkowalski/metal3-dev-scripts (fork of openshift-metal3/dev-scripts) | `scion-topology` | Commit `b3a9137`: ten-container SCION v0.15.1 topology, underlay-bypass guard, TCP target, discovery, registrar, and AS-control policy routing. Fully validated by the five-node e2e. Not proposed upstream yet. |
 | github.com/mkowalski/scion (fork of scionproto/scion) | `fix-sig-clearsession-panic` | Fix merged upstream as scionproto/scion#4954 and released in v0.15.1. |
 
 Upstream fix status:
@@ -45,14 +45,13 @@ Upstream fix status:
     scion-br-b, scion-daemon-b, scion-sig-b, scion-remote-echo,
     scion-discovery, scion-registrar. Image `localhost/scion-infra:v0.15.1`
     (built locally; NOT pushed anywhere by design).
-  - Handoff values for the operator e2e:
-    `DISCOVERY_URL=http://192.168.111.1:8041`,
+  - Handoff values: `DISCOVERY_URL=http://192.168.111.1:8041`,
     `REGISTRAR_URL=http://192.168.111.1:8642`,
     `REGISTRAR_TOKEN=$(ssh metal-u15 cat /tmp/scion-t4/scion/token)`,
-    `REMOTE_ISD_AS=1-ff00:0:111`, `REMOTE_PING_IP=192.168.100.1`.
-  - The existing v0.15.0 image can crash under heavy agent churn.
-    Rebuilding the topology image with v0.15.1 picks up the merged fix.
-- Final source-preserving validation images were built on the host and pushed as
+    `REMOTE_ISD_AS=1-ff00:0:111`, `REMOTE_PING_IP=192.168.100.1`,
+    `UNDERLAY_CIDR=192.168.111.0/24`, `REMOTE_SSH=local` when the suite runs
+    on the hypervisor.
+- Final validation images:
   `quay.io/mkowalski/scion-operator:source-preserving-20260820-5` and
   `quay.io/mkowalski/scion-node-agent:source-preserving-20260820-5`. Registry
   trust and pull credentials are already configured on the cluster.
