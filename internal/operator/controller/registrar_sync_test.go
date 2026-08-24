@@ -148,9 +148,22 @@ func TestDegradedReason(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			on, why := degradedReason(tc.ready, tc.total, tc.platform, tc.regFailed, tc.backend)
+			tc.platform.Message = "platform message"
+			on, why, msg := degradedReason(tc.ready, tc.total, "unready message", tc.platform, tc.regFailed, "registrar error", tc.backend)
 			if on != tc.wantOn || why != tc.wantReason {
 				t.Errorf("degradedReason = (%v, %q), want (%v, %q)", on, why, tc.wantOn, tc.wantReason)
+			}
+			var wantMsg string
+			switch tc.wantReason {
+			case "RegistrarSyncFailed":
+				wantMsg = "registrar error"
+			case "HostRoutingDisabled":
+				wantMsg = "platform message"
+			default:
+				wantMsg = "unready message"
+			}
+			if msg != wantMsg {
+				t.Errorf("degradedReason message = %q, want %q", msg, wantMsg)
 			}
 		})
 	}

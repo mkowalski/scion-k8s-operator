@@ -1,10 +1,23 @@
 package controller
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	"github.com/mkowalski/scion-k8s-operator/api/v1alpha1"
 )
 
 func networkObject(networkType string, routingViaHost any) *unstructured.Unstructured {
@@ -86,20 +99,11 @@ func TestClassifyPodEgressPlatform(t *testing.T) {
 			if got.Status != tc.wantStatus || got.Reason != tc.wantReason {
 				t.Fatalf("classification = %+v, want status=%s reason=%s", got, tc.wantStatus, tc.wantReason)
 			}
-			if tc.messageSubstring != "" && !contains(got.Message, tc.messageSubstring) {
+			if tc.messageSubstring != "" && !strings.Contains(got.Message, tc.messageSubstring) {
 				t.Fatalf("message %q does not contain %q", got.Message, tc.messageSubstring)
 			}
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return substr == ""
 }
 
 func TestHasAcceptedDefaultPodAdvertisement(t *testing.T) {
@@ -117,5 +121,170 @@ func TestHasAcceptedDefaultPodAdvertisement(t *testing.T) {
 		if hasAcceptedDefaultPodAdvertisement([]unstructured.Unstructured{item}) {
 			t.Fatalf("unexpected source-preservation match for %#v", item.Object)
 		}
+	}
+}
+
+// newPlatformFakeClient builds a fake client that knows the optional
+// operator.openshift.io Network (and, when registerRA is true, the
+// k8s.ovn.org RouteAdvertisements) kinds as unstructured types. Leaving a
+// kind unregistered makes Get/List return a NoMatch error, mirroring a
+// cluster where the CRD is absent.
+func newPlatformFakeClient(t *testing.T, registerRA bool, funcs interceptor.Funcs, objs ...client.Object) client.Client {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "operator.openshift.io", Version: "v1", Kind: "Network",
+	}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "operator.openshift.io", Version: "v1", Kind: "NetworkList",
+	}, &unstructured.UnstructuredList{})
+	if registerRA {
+		scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+			Group: "k8s.ovn.org", Version: "v1", Kind: "RouteAdvertisements",
+		}, &unstructured.Unstructured{})
+		scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+			Group: "k8s.ovn.org", Version: "v1", Kind: "RouteAdvertisementsList",
+		}, &unstructured.UnstructuredList{})
+	}
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithInterceptorFuncs(funcs).
+		Build()
+}
+
+func TestDetectPodEgressPlatform(t *testing.T) {
+	networkGR := schema.GroupResource{Group: "operator.openshift.io", Resource: "networks"}
+	defaultSelector := []any{map[string]any{"networkSelectionType": "DefaultNetwork"}}
+	localGatewayNetwork := func(routeAdvertisements string) *unstructured.Unstructured {
+		n := networkObject("OVNKubernetes", true)
+		if routeAdvertisements != "" {
+			if err := unstructured.SetNestedField(n.Object, routeAdvertisements,
+				"spec", "defaultNetwork", "ovnKubernetesConfig", "routeAdvertisements"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return n
+	}
+	forbiddenGet := interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if obj.GetObjectKind().GroupVersionKind().Group == "operator.openshift.io" {
+				return apierrors.NewForbidden(networkGR, key.Name, errors.New("rbac denied"))
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}
+	brokenGet := interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if obj.GetObjectKind().GroupVersionKind().Group == "operator.openshift.io" {
+				return apierrors.NewInternalError(errors.New("apiserver on fire"))
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}
+	forbiddenList := interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if list.GetObjectKind().GroupVersionKind().Group == "k8s.ovn.org" {
+				return apierrors.NewForbidden(schema.GroupResource{Group: "k8s.ovn.org", Resource: "routeadvertisements"}, "", errors.New("rbac denied"))
+			}
+			return c.List(ctx, list, opts...)
+		},
+	}
+	noMatchList := interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if list.GetObjectKind().GroupVersionKind().Group == "k8s.ovn.org" {
+				return &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "k8s.ovn.org", Kind: "RouteAdvertisements"}}
+			}
+			return c.List(ctx, list, opts...)
+		},
+	}
+	acceptedRA := routeAdvertisement("Accepted", []any{"PodNetwork"}, defaultSelector)
+	rejectedRA := routeAdvertisement("Rejected", []any{"PodNetwork"}, defaultSelector)
+
+	tests := []struct {
+		name             string
+		client           client.Client
+		wantStatus       metav1.ConditionStatus
+		wantReason       string
+		messageSubstring string
+	}{
+		{
+			name:       "network CR absent",
+			client:     newPlatformFakeClient(t, false, interceptor.Funcs{}),
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "PlatformUnverified",
+		},
+		{
+			name:       "network get forbidden",
+			client:     newPlatformFakeClient(t, false, forbiddenGet, localGatewayNetwork("Enabled")),
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "PlatformUnverified",
+		},
+		{
+			name:             "network get transient error",
+			client:           newPlatformFakeClient(t, false, brokenGet, localGatewayNetwork("Enabled")),
+			wantStatus:       metav1.ConditionUnknown,
+			wantReason:       "PlatformDetectionFailed",
+			messageSubstring: "read OpenShift network operator config",
+		},
+		{
+			name:             "route advertisements not enabled",
+			client:           newPlatformFakeClient(t, false, interceptor.Funcs{}, localGatewayNetwork("")),
+			wantStatus:       metav1.ConditionFalse,
+			wantReason:       "SourcePreservationDisabled",
+			messageSubstring: "routeAdvertisements must be Enabled",
+		},
+		{
+			name:             "route advertisements API absent",
+			client:           newPlatformFakeClient(t, false, noMatchList, localGatewayNetwork("Enabled")),
+			wantStatus:       metav1.ConditionFalse,
+			wantReason:       "SourcePreservationDisabled",
+			messageSubstring: "API is not available",
+		},
+		{
+			name:       "route advertisements list forbidden",
+			client:     newPlatformFakeClient(t, true, forbiddenList, localGatewayNetwork("Enabled")),
+			wantStatus: metav1.ConditionUnknown,
+			wantReason: "PlatformUnverified",
+		},
+		{
+			name:             "no accepted default advertisement",
+			client:           newPlatformFakeClient(t, true, interceptor.Funcs{}, localGatewayNetwork("Enabled"), &rejectedRA),
+			wantStatus:       metav1.ConditionFalse,
+			wantReason:       "SourcePreservationDisabled",
+			messageSubstring: "no accepted RouteAdvertisements",
+		},
+		{
+			name:             "source preservation verified",
+			client:           newPlatformFakeClient(t, true, interceptor.Funcs{}, localGatewayNetwork("Enabled"), &acceptedRA),
+			wantStatus:       metav1.ConditionTrue,
+			wantReason:       "HostRoutingEnabled",
+			messageSubstring: "pod source preservation",
+		},
+		{
+			name:             "shared gateway",
+			client:           newPlatformFakeClient(t, false, interceptor.Funcs{}, networkObject("OVNKubernetes", false)),
+			wantStatus:       metav1.ConditionFalse,
+			wantReason:       "HostRoutingDisabled",
+			messageSubstring: "routingViaHost=true",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &ScionNetworkReconciler{Client: tc.client}
+			got := r.detectPodEgressPlatform(context.Background())
+			if got.Status != tc.wantStatus || got.Reason != tc.wantReason {
+				t.Fatalf("platform = %+v, want status=%s reason=%s", got, tc.wantStatus, tc.wantReason)
+			}
+			if tc.messageSubstring != "" && !strings.Contains(got.Message, tc.messageSubstring) {
+				t.Fatalf("message %q does not contain %q", got.Message, tc.messageSubstring)
+			}
+		})
 	}
 }

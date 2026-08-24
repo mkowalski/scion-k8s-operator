@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -18,29 +19,35 @@ type podEgressPlatform struct {
 	Message string
 }
 
-func (r *ScionNetworkReconciler) detectPodEgressPlatform(ctx context.Context) (podEgressPlatform, error) {
+// detectPodEgressPlatform probes optional OpenShift/OVN-Kubernetes APIs to
+// classify whether pod egress preserves source addresses. The probe is
+// informational: it must never block the data-plane reconcile, so every
+// failure degrades to a condition status instead of an error. Forbidden is
+// treated like NotFound/NoMatch (e.g. a stale ClusterRole during upgrade, or
+// OVN CRDs present on a cluster where the operator has no read access).
+func (r *ScionNetworkReconciler) detectPodEgressPlatform(ctx context.Context) podEgressPlatform {
 	network := &unstructured.Unstructured{}
 	network.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "operator.openshift.io", Version: "v1", Kind: "Network",
 	})
 	if err := r.Get(ctx, types.NamespacedName{Name: "cluster"}, network); err != nil {
-		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+		if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) || meta.IsNoMatchError(err) {
 			return podEgressPlatform{
 				Status:  metav1.ConditionUnknown,
 				Reason:  "PlatformUnverified",
 				Message: "OpenShift OVN-Kubernetes gateway configuration is not available",
-			}, nil
+			}
 		}
-		return podEgressPlatform{}, fmt.Errorf("read OpenShift network operator config: %w", err)
+		return platformDetectionFailed(fmt.Errorf("read OpenShift network operator config: %w", err))
 	}
 	platform := classifyPodEgressPlatform(network)
 	if platform.Status != metav1.ConditionTrue {
-		return platform, nil
+		return platform
 	}
 	routeAdvertisements, _, _ := unstructured.NestedString(network.Object,
 		"spec", "defaultNetwork", "ovnKubernetesConfig", "routeAdvertisements")
 	if routeAdvertisements != "Enabled" {
-		return sourcePreservationDisabled("OVN routeAdvertisements must be Enabled to preserve pod source addresses"), nil
+		return sourcePreservationDisabled("OVN routeAdvertisements must be Enabled to preserve pod source addresses")
 	}
 
 	routes := &unstructured.UnstructuredList{}
@@ -49,18 +56,33 @@ func (r *ScionNetworkReconciler) detectPodEgressPlatform(ctx context.Context) (p
 	})
 	if err := r.List(ctx, routes); err != nil {
 		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
-			return sourcePreservationDisabled("OVN RouteAdvertisements API is not available"), nil
+			return sourcePreservationDisabled("OVN RouteAdvertisements API is not available")
 		}
-		return podEgressPlatform{}, fmt.Errorf("list OVN RouteAdvertisements: %w", err)
+		if apierrors.IsForbidden(err) {
+			return podEgressPlatform{
+				Status:  metav1.ConditionUnknown,
+				Reason:  "PlatformUnverified",
+				Message: "OVN RouteAdvertisements are not readable by the operator",
+			}
+		}
+		return platformDetectionFailed(fmt.Errorf("list OVN RouteAdvertisements: %w", err))
 	}
 	if !hasAcceptedDefaultPodAdvertisement(routes.Items) {
-		return sourcePreservationDisabled("no accepted RouteAdvertisements exports PodNetwork for the default network"), nil
+		return sourcePreservationDisabled("no accepted RouteAdvertisements exports PodNetwork for the default network")
 	}
 	return podEgressPlatform{
 		Status:  metav1.ConditionTrue,
 		Reason:  "HostRoutingEnabled",
 		Message: "OVN-Kubernetes routes pod egress through the host with pod source preservation",
-	}, nil
+	}
+}
+
+func platformDetectionFailed(err error) podEgressPlatform {
+	return podEgressPlatform{
+		Status:  metav1.ConditionUnknown,
+		Reason:  "PlatformDetectionFailed",
+		Message: err.Error(),
+	}
 }
 
 func classifyPodEgressPlatform(network *unstructured.Unstructured) podEgressPlatform {
@@ -112,14 +134,7 @@ func hasAcceptedDefaultPodAdvertisement(items []unstructured.Unstructured) bool 
 			continue
 		}
 		advertisements, _, _ := unstructured.NestedStringSlice(item.Object, "spec", "advertisements")
-		containsPodNetwork := false
-		for _, advertisement := range advertisements {
-			if advertisement == "PodNetwork" {
-				containsPodNetwork = true
-				break
-			}
-		}
-		if !containsPodNetwork {
+		if !slices.Contains(advertisements, "PodNetwork") {
 			continue
 		}
 		selectors, _, _ := unstructured.NestedSlice(item.Object, "spec", "networkSelectors")
