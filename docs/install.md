@@ -39,8 +39,14 @@ oc patch network.operator cluster --type=merge \
 
 The operator observes these settings through its existing status conditions;
 it never changes cluster-wide network configuration or creates OVN routing
-resources. Local-gateway mode trades shared-gateway hardware offload for host
-route integration.
+resources. The platform probe is purely informational: it can never block the
+agent DaemonSet apply. When the OpenShift or OVN APIs are absent or not
+readable (vanilla Kubernetes, missing RBAC, CRDs installed later), the
+condition reports `PlatformUnverified` (Unknown) and the operator re-checks
+every five minutes; an unmet prerequisite reports `Available=False` and
+`Degraded=True` with reason `HostRoutingDisabled` or
+`SourcePreservationDisabled`. Local-gateway mode trades shared-gateway
+hardware offload for host route integration.
 
 ## 1. Build and push images
 
@@ -120,7 +126,7 @@ Which local prefixes each node advertises into SCION via SGRP.
 | Field | Description |
 |-------|-------------|
 | `podCIDR` | Advertise each node's pod CIDR. Default `true`; required for return traffic to source-preserved pods. |
-| `nodeIP` | Advertise each node's IP (/32). Default `true`, but set `false` whenever the node IP is also a SCION underlay address; advertising that address creates recursive routing. |
+| `nodeIP` | Advertise each node's IP (/32). Default `false`: advertising a node IP that is also a SCION underlay address creates recursive routing. Enable only when node IPs are disjoint from the underlay. |
 
 ### spec.acceptPolicy (required)
 
@@ -129,8 +135,8 @@ Which remote prefixes are accepted (guardrails).
 | Field | Description |
 |-------|-------------|
 | `isdASes` | Remote ISD-ASes to exchange prefixes with. At least one required; each must match `\d+-([0-9a-fA-F_:]+|\d+)` (e.g. `1-ff00:0:110`). |
-| `forbiddenCIDRs` | IPv4 CIDRs never accepted from remotes. The operator appends the cluster's IPv4 pod and service networks automatically and ignores IPv6 ranges because the policy engine is IPv4-only. |
-| `underlayCIDRs` | Required IPv4 transport networks used between nodes and the local SCION AS. Always excluded from learned SCION routes to keep bootstrap, registrar, probes, and border-router traffic outside the tunnel. |
+| `forbiddenCIDRs` | IPv4 CIDRs never accepted from remotes. The operator appends the cluster's IPv4 pod and service networks automatically and ignores IPv6 ranges because the policy engine is IPv4-only. Entries that pass CRD validation but are not valid CIDRs (e.g. `10.0.0.0/33`) fail the reconcile with `Degraded` reason `ApplyFailed` instead of being silently dropped from the deny list. |
+| `underlayCIDRs` | IPv4 transport networks used between nodes and the local SCION AS. Always excluded from learned SCION routes to keep bootstrap, registrar, probes, and border-router traffic outside the tunnel. Not schema-enforced, but omitting it on a topology where remote peers advertise the underlay causes the deadlock described above — treat it as required in practice. |
 
 ### spec.dataplane (optional)
 

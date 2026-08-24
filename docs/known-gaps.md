@@ -66,10 +66,10 @@ route, and undeploy removes tunnel and registration state.
 1. **Node-IP advertisement is unsafe when the node IP shares the SCION
    underlay network.** Advertising node /32s made the remote SIG route the
    underlay itself into the tunnel (verified live: 272GB looped through the
-   remote tun, blackholing probes and discovery). The operator should
-   refuse or warn when advertised node IPs overlap the underlay path;
-   `advertisement.nodeIP: false` is the safe setting in single-NIC
-   topologies.
+   remote tun, blackholing probes and discovery). `advertisement.nodeIP`
+   therefore now defaults to `false`; enable it only when node IPs are
+   disjoint from the underlay. Overlap detection that would refuse or warn
+   on an unsafe explicit `true` is still unimplemented.
 2. **Registry/pull-secret assumptions in e2e.** The agent ServiceAccount is
    operator-owned and garbage-collected with the ScionNetwork; per-SA
    `imagePullSecrets` links are lost across undeploy/configure cycles.

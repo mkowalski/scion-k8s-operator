@@ -129,6 +129,15 @@ remote_exec() {
     fi
 }
 
+# assert_ipv4 NAME VALUE — values interpolated into remote_exec commands are
+# re-split by the remote shell; only accept IPv4 literals so unexpected
+# cluster/API output cannot inject remote commands.
+assert_ipv4() {
+    case "$2" in
+        *[!0-9.]*|"") die "$1 is not an IPv4 literal: '$2'" ;;
+    esac
+}
+
 require_source_preserving_host_routing() {
     local routing advertisements routes
     routing=$(oc get network.operator.openshift.io cluster \
@@ -261,6 +270,7 @@ assert_agents() {
 
 assert_dataplane() {
     require_env REMOTE_PING_IP REMOTE_SSH
+    assert_ipv4 REMOTE_PING_IP "$REMOTE_PING_IP"
     require_source_preserving_host_routing
 
     log "launching test pod $TEST_POD ($TEST_IMAGE)"
@@ -272,6 +282,7 @@ assert_dataplane() {
     local node node_ip host_source pod_ip route normal_route underlay_route capture capture_pid
     node=$(oc -n "$NAMESPACE" get pod "$TEST_POD" -o jsonpath='{.spec.nodeName}')
     pod_ip=$(oc -n "$NAMESPACE" get pod "$TEST_POD" -o jsonpath='{.status.podIP}')
+    assert_ipv4 pod_ip "$pod_ip"
 
     log "checking learned route to $REMOTE_PING_IP on node $node"
     node_has_tun "$node"
@@ -279,6 +290,7 @@ assert_dataplane() {
     printf '%s\n' "$route" | grep -Eq "dev $TUN_NAME([[:space:]]|$)" || \
         die "route to $REMOTE_PING_IP does not select $TUN_NAME: $route"
     host_source=$(route_source "$route")
+    assert_ipv4 host_source "$host_source"
     if oc debug "node/$node" -q -- chroot /host nft list table inet scion-node-agent >/dev/null 2>&1; then
         die "unexpected scion-node-agent nftables table on $node"
     fi

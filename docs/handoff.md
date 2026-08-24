@@ -15,7 +15,7 @@ every major choice is in `decisions.md`; open problems in `known-gaps.md`.
 
 | Repo | Branch | State |
 |---|---|---|
-| github.com/mkowalski/scion-k8s-operator | `main` | Source-preserving OVN-K egress and hardened live e2e are complete on commit `b5795b0`; SCION v0.15.1. Operator, agent, registrar, CRD, manifests, OLM bundle, tests, docs. |
+| github.com/mkowalski/scion-k8s-operator | `main` | Source-preserving OVN-K egress and hardened live e2e complete (as of 2026-08-21, including post-review hardening: fail-closed CIDR validation, non-blocking platform probe, unified registrar timeouts, `nodeIP` default off); SCION v0.15.1. Operator, agent, registrar, CRD, manifests, OLM bundle, tests, docs. |
 | github.com/mkowalski/metal3-dev-scripts (fork of openshift-metal3/dev-scripts) | `scion-topology` | Commit `b3a9137`: ten-container SCION v0.15.1 topology, underlay-bypass guard, TCP target, discovery, registrar, and AS-control policy routing. Fully validated by the five-node e2e. Not proposed upstream yet. |
 | github.com/mkowalski/scion (fork of scionproto/scion) | `fix-sig-clearsession-panic` | Fix merged upstream as scionproto/scion#4954 and released in v0.15.1. |
 

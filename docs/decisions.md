@@ -132,7 +132,10 @@ router fits".
 The live OpenShift run disproved the assumption that shared-gateway pod egress
 consults host routes. Transparent pod egress therefore requires
 `routingViaHost: true`; the operator observes this prerequisite but never
-mutates the cluster-wide Network configuration.
+mutates the cluster-wide Network configuration. The observation is
+non-blocking by design: probe failures (missing APIs, missing RBAC,
+transient apiserver errors) degrade to an Unknown condition and a periodic
+re-check instead of stopping data-plane reconciliation.
 
 The existing SCION gateway remains the sole route publisher. Only prefixes
 learned through healthy SGRP sessions select `scion0`; all other traffic keeps
