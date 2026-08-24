@@ -43,13 +43,14 @@ func TestDaemonSet(t *testing.T) {
 
 func TestDaemonSetBoolEnvDefaults(t *testing.T) {
 	sn := testSN()
-	// nil *bool -> "true"
+	// nil *bool -> podCIDR defaults on, nodeIP defaults off (fail-safe:
+	// advertising an underlay-sharing node IP creates a routing loop)
 	ds := DaemonSet(sn, "img", nil)
 	env := map[string]string{}
 	for _, e := range ds.Spec.Template.Spec.Containers[0].Env {
 		env[e.Name] = e.Value
 	}
-	if env["SCION_ADVERTISE_POD_CIDR"] != "true" || env["SCION_ADVERTISE_NODE_IP"] != "true" {
+	if env["SCION_ADVERTISE_POD_CIDR"] != "true" || env["SCION_ADVERTISE_NODE_IP"] != "false" {
 		t.Fatalf("bool defaults: %v", env)
 	}
 	f := false

@@ -91,7 +91,10 @@ func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string)
 		{Name: "SCION_ACCEPT_ISD_ASES", Value: strings.Join(sn.Spec.AcceptPolicy.ISDASes, ",")},
 		{Name: "SCION_FORBIDDEN_CIDRS", Value: strings.Join(forbiddenCIDRs, ",")},
 		{Name: "SCION_ADVERTISE_POD_CIDR", Value: boolStr(boolOr(sn.Spec.Advertisement.PodCIDR, true))},
-		{Name: "SCION_ADVERTISE_NODE_IP", Value: boolStr(boolOr(sn.Spec.Advertisement.NodeIP, true))},
+		// nodeIP advertisement is fail-safe off: advertising a node IP
+		// that shares the SCION underlay creates a routing loop (see
+		// api/v1alpha1 field doc), so a nil value means disabled.
+		{Name: "SCION_ADVERTISE_NODE_IP", Value: boolStr(boolOr(sn.Spec.Advertisement.NodeIP, false))},
 	}
 	volumes := []corev1.Volume{
 		{Name: "state", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{

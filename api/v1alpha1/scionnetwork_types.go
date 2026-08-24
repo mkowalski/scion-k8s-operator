@@ -37,8 +37,13 @@ type AdvertisementSpec struct {
 	// PodCIDR enables advertising each node's pod CIDR.
 	// +kubebuilder:default:=true
 	PodCIDR *bool `json:"podCIDR,omitempty"`
-	// NodeIP enables advertising each node's IP address.
-	// +kubebuilder:default:=true
+	// NodeIP enables advertising each node's IP address. Disabled by
+	// default: when node IPs share the network that carries the SCION
+	// tunnel traffic (the underlay), advertising them makes remote ASes
+	// route the underlay into the tunnel, causing a routing loop. Enable
+	// only when node IPs are disjoint from the underlay or the remote
+	// side excludes it (see spec.acceptPolicy.underlayCIDRs).
+	// +kubebuilder:default:=false
 	NodeIP *bool `json:"nodeIP,omitempty"`
 }
 
