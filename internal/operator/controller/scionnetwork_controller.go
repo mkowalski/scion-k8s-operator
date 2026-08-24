@@ -90,11 +90,10 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		r.markApplyFailed(ctx, sn, err)
 		return ctrl.Result{}, err
 	}
-	platform, err := r.detectPodEgressPlatform(ctx)
-	if err != nil {
-		r.markApplyFailed(ctx, sn, err)
-		return ctrl.Result{}, err
-	}
+	// The platform probe is informational and never returns an error: any
+	// failure is reflected in the podEgressPlatform condition instead of
+	// blocking the data-plane apply below.
+	platform := r.detectPodEgressPlatform(ctx)
 	image := sn.Spec.AgentImage
 	if image == "" {
 		image = r.AgentImage
@@ -128,6 +127,14 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// owned by the DaemonSet, not the ScionNetwork), so poll until
 		// fully available.
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	if platform.Status != metav1.ConditionTrue {
+		// The optional platform APIs are only watched when their CRDs
+		// exist at operator startup (see SetupWithManager). If they are
+		// installed later, no event fires, so poll slowly to converge
+		// the podEgressPlatform condition instead of staying Unknown
+		// until an unrelated event or a restart.
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	}
 	return ctrl.Result{}, nil
 }
@@ -352,24 +359,28 @@ func (r *ScionNetworkReconciler) applyObjectNoOwner(ctx context.Context, obj cli
 // IPv4-only; dual-stack clusters therefore contribute only their IPv4 ranges.
 // On vanilla Kubernetes the GET fails with NotFound or NoMatch and spec values
 // are used as-is.
+//
+// Spec-provided entries are deny-list input: an unparsable value must fail
+// the reconcile (surfacing as Degraded/ApplyFailed) rather than be silently
+// dropped, which would widen the accepted address space. Only valid IPv6
+// prefixes are skipped silently. Cluster-derived values are filtered to IPv4
+// without error, since dual-stack clusters legitimately carry IPv6 ranges.
 func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *v1alpha1.ScionNetwork) ([]string, error) {
-	var out []string
-	for _, cidr := range sn.Spec.AcceptPolicy.ForbiddenCIDRs {
-		if isIPv4CIDR(cidr) {
-			out = append(out, cidr)
-		}
+	out, err := specIPv4CIDRs("forbiddenCIDRs", sn.Spec.AcceptPolicy.ForbiddenCIDRs)
+	if err != nil {
+		return nil, err
 	}
-	for _, cidr := range sn.Spec.AcceptPolicy.UnderlayCIDRs {
-		if isIPv4CIDR(cidr) {
-			out = append(out, cidr)
-		}
+	underlay, err := specIPv4CIDRs("underlayCIDRs", sn.Spec.AcceptPolicy.UnderlayCIDRs)
+	if err != nil {
+		return nil, err
 	}
+	out = append(out, underlay...)
 
 	nc := &unstructured.Unstructured{}
 	nc.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "config.openshift.io", Version: "v1", Kind: "Network",
 	})
-	err := r.Get(ctx, types.NamespacedName{Name: "cluster"}, nc)
+	err = r.Get(ctx, types.NamespacedName{Name: "cluster"}, nc)
 	switch {
 	case err == nil:
 		cns, _, _ := unstructured.NestedSlice(nc.Object, "spec", "clusterNetwork")
@@ -392,6 +403,24 @@ func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *
 		return nil, fmt.Errorf("read openshift network config: %w", err)
 	}
 	return dedupe(out), nil
+}
+
+// specIPv4CIDRs validates user-provided CIDR entries from the ScionNetwork
+// spec. Unparsable entries (which the CRD pattern cannot fully reject, e.g.
+// "300.1.1.1/8" or "10.0.0.0/33") are an error; valid IPv6 prefixes are
+// skipped because the agent policy engine is IPv4-only.
+func specIPv4CIDRs(field string, cidrs []string) ([]string, error) {
+	var out []string
+	for _, cidr := range cidrs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CIDR %q in spec.acceptPolicy.%s: %w", cidr, field, err)
+		}
+		if prefix.Addr().Is4() {
+			out = append(out, cidr)
+		}
+	}
+	return out, nil
 }
 
 func isIPv4CIDR(cidr string) bool {
@@ -460,7 +489,9 @@ func (r *ScionNetworkReconciler) updateStatus(
 	progressing := !dsCurrent || total == 0 || ready < total
 	// TODO: refine Degraded to "pod unready for >5m" once pod transition
 	// timestamps are tracked; for now any unready pod marks Degraded.
-	isDegraded, reason := degradedReason(ready, total, platform, regFailed, sn.Spec.Registrar.Backend)
+	isDegraded, reason, degradedMsg := degradedReason(ready, total,
+		fmt.Sprintf("unready nodes: %v", degraded), platform, regFailed,
+		reg.LastError, sn.Spec.Registrar.Backend)
 
 	sn.Status.Nodes = v1alpha1.NodeSummary{Ready: ready, Total: total, Degraded: degraded}
 	sn.Status.Registrar = reg
@@ -483,13 +514,6 @@ func (r *ScionNetworkReconciler) updateStatus(
 	setCond("Available", available, availableReason, availableMessage)
 	setCond("Progressing", progressing, "Rollout",
 		fmt.Sprintf("%d/%d node agents ready", ready, total))
-	degradedMsg := fmt.Sprintf("unready nodes: %v", degraded)
-	switch reason {
-	case "RegistrarSyncFailed":
-		degradedMsg = reg.LastError
-	case "HostRoutingDisabled", "SourcePreservationDisabled":
-		degradedMsg = platform.Message
-	}
 	setCond("Degraded", isDegraded, reason, degradedMsg)
 
 	if err := r.Status().Update(ctx, sn); err != nil {

@@ -480,3 +480,126 @@ func TestClusterForbiddenCIDRsIncludesUnderlay(t *testing.T) {
 		t.Fatalf("forbidden CIDRs = %v, IPv6 prefix should be filtered", got)
 	}
 }
+
+func TestClusterForbiddenCIDRsRejectsInvalidSpecEntries(t *testing.T) {
+	// Values that pass the CRD pattern but are not valid CIDRs must fail
+	// the reconcile instead of being silently dropped from the deny list.
+	for _, tc := range []struct {
+		name   string
+		mutate func(*v1alpha1.ScionNetwork)
+		want   string
+	}{
+		{
+			name: "forbidden octet out of range",
+			mutate: func(sn *v1alpha1.ScionNetwork) {
+				sn.Spec.AcceptPolicy.ForbiddenCIDRs = []string{"300.1.1.1/8"}
+			},
+			want: "spec.acceptPolicy.forbiddenCIDRs",
+		},
+		{
+			name: "underlay prefix length out of range",
+			mutate: func(sn *v1alpha1.ScionNetwork) {
+				sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"10.0.0.0/33"}
+			},
+			want: "spec.acceptPolicy.underlayCIDRs",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sn := newScionNetwork()
+			tc.mutate(sn)
+			c, scheme := newFakeClient(t)
+			r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+			_, err := r.clusterForbiddenCIDRs(context.Background(), sn)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("clusterForbiddenCIDRs error = %v, want mention of %s", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestUpdateStatusPlatformGating: a platform prerequisite failure
+// (ConditionFalse) must block Available and drive the Degraded message even
+// when all agents are ready, while an unverified platform (ConditionUnknown)
+// must not.
+func TestUpdateStatusPlatformGating(t *testing.T) {
+	newObjs := func() (*v1alpha1.ScionNetwork, []client.Object) {
+		sn := newScionNetwork()
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: render.Namespace,
+				Name:      "agent-1",
+				Labels:    map[string]string{"app": "scion-node-agent"},
+			},
+			Spec: corev1.PodSpec{NodeName: "node1"},
+			Status: corev1.PodStatus{Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
+			}},
+		}
+		ds := &appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{Namespace: render.Namespace, Name: "scion-node-agent"},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1},
+		}
+		return sn, []client.Object{sn, pod, ds}
+	}
+	cond := func(sn *v1alpha1.ScionNetwork, condType string) *metav1.Condition {
+		for i := range sn.Status.Conditions {
+			if sn.Status.Conditions[i].Type == condType {
+				return &sn.Status.Conditions[i]
+			}
+		}
+		return nil
+	}
+
+	t.Run("platform false blocks availability", func(t *testing.T) {
+		sn, objs := newObjs()
+		c, scheme := newFakeClient(t, objs...)
+		r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+		platform := podEgressPlatform{
+			Status:  metav1.ConditionFalse,
+			Reason:  "HostRoutingDisabled",
+			Message: "OVN-Kubernetes shared-gateway mode bypasses host routes",
+		}
+		available, err := r.updateStatus(context.Background(), sn, v1alpha1.RegistrarStatus{}, false, platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if available {
+			t.Fatal("available = true, want false when platform prerequisite fails")
+		}
+		av := cond(sn, "Available")
+		if av == nil || av.Status != metav1.ConditionFalse || av.Reason != "HostRoutingDisabled" ||
+			av.Message != platform.Message {
+			t.Fatalf("Available condition = %+v, want False/HostRoutingDisabled with platform message", av)
+		}
+		dg := cond(sn, "Degraded")
+		if dg == nil || dg.Status != metav1.ConditionTrue || dg.Reason != "HostRoutingDisabled" ||
+			dg.Message != platform.Message {
+			t.Fatalf("Degraded condition = %+v, want True/HostRoutingDisabled with platform message", dg)
+		}
+	})
+
+	t.Run("platform unknown does not block availability", func(t *testing.T) {
+		sn, objs := newObjs()
+		c, scheme := newFakeClient(t, objs...)
+		r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+		platform := podEgressPlatform{
+			Status: metav1.ConditionUnknown,
+			Reason: "PlatformUnverified",
+		}
+		available, err := r.updateStatus(context.Background(), sn, v1alpha1.RegistrarStatus{}, false, platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !available {
+			t.Fatal("available = false, want true when platform is merely unverified")
+		}
+		av := cond(sn, "Available")
+		if av == nil || av.Status != metav1.ConditionTrue || av.Reason != "NodeAgents" {
+			t.Fatalf("Available condition = %+v, want True/NodeAgents", av)
+		}
+		dg := cond(sn, "Degraded")
+		if dg == nil || dg.Status != metav1.ConditionFalse {
+			t.Fatalf("Degraded condition = %+v, want False", dg)
+		}
+	})
+}
