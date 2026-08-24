@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	registrar "github.com/mkowalski/scion-k8s-operator/internal/registrar"
 )
 
 // Interface compliance for all backends.
@@ -134,5 +136,16 @@ func TestHTTPEnsureConnectionError(t *testing.T) {
 	srv.Close()
 	if err := (&HTTP{Endpoint: srv.URL, Token: "t"}).Ensure(context.Background(), nil); err == nil {
 		t.Fatal("Ensure = nil, want connection error")
+	}
+}
+
+// TestTimeoutOrdering pins the invariant chain across the registration path:
+// one reload < server WriteTimeout coverage (2*reload) < client timeout.
+// A client timeout at or below 2*ReloadTimeout can expire on a request the
+// server will still complete (queued behind one in-flight reload).
+func TestTimeoutOrdering(t *testing.T) {
+	if DefaultTimeout <= 2*registrar.ReloadTimeout {
+		t.Fatalf("DefaultTimeout (%v) must exceed 2*ReloadTimeout (%v)",
+			DefaultTimeout, 2*registrar.ReloadTimeout)
 	}
 }

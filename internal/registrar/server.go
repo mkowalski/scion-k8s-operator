@@ -6,11 +6,20 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // maxBodyBytes caps PUT bodies; a full sigs set for a large cluster is
 // well under this.
 const maxBodyBytes = 1 << 20
+
+// ReloadTimeout bounds one execution of the topology reload command. It is
+// the anchor for every other timeout in the registration path: the server's
+// WriteTimeout must cover one reload, and because PUTs are serialized a
+// client may additionally wait behind one in-flight reload, so client-side
+// timeouts must exceed 2*ReloadTimeout. See cmd/registrar/main.go and
+// internal/operator/registrar/http.go.
+const ReloadTimeout = 30 * time.Second
 
 // Server exposes the sigs registration API:
 //

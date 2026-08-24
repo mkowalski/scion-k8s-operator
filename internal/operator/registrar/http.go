@@ -8,7 +8,15 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	asregistrar "github.com/mkowalski/scion-k8s-operator/internal/registrar"
 )
+
+// DefaultTimeout is the default HTTP client timeout for registrar calls.
+// The registrar serializes PUTs, so in the worst case a request waits behind
+// one in-flight topology reload and then runs its own: 2*ReloadTimeout, plus
+// headroom for request handling and network latency.
+const DefaultTimeout = 2*asregistrar.ReloadTimeout + 10*time.Second
 
 // HTTP registers SIGs against the AS-side registrar service (internal/registrar):
 // PUT {Endpoint}/v1/sigs with a Bearer token; 204 means the topology was
@@ -18,7 +26,7 @@ type HTTP struct {
 	Endpoint string
 	// Token is sent as "Authorization: Bearer <Token>".
 	Token string
-	// Client is optional; when nil, a client with a 45s timeout is used.
+	// Client is optional; when nil, a client with DefaultTimeout is used.
 	Client *http.Client
 }
 
@@ -41,10 +49,7 @@ func (h *HTTP) Ensure(ctx context.Context, sigs []SIG) error {
 
 	c := h.Client
 	if c == nil {
-		// The registrar may spend up to 30s running its topology reload command.
-		// Leave headroom for request handling so a valid reload cannot strand
-		// subsequent PUTs behind the registrar's serialization lock.
-		c = &http.Client{Timeout: 45 * time.Second}
+		c = &http.Client{Timeout: DefaultTimeout}
 	}
 	resp, err := c.Do(req)
 	if err != nil {

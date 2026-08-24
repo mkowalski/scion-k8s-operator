@@ -70,7 +70,7 @@ func run(log *slog.Logger) error {
 		Token:        token,
 		Log:          log,
 		Reload: func() error {
-			rctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			rctx, cancel := context.WithTimeout(context.Background(), registrar.ReloadTimeout)
 			defer cancel()
 			out, err := exec.CommandContext(rctx, argv[0], argv[1:]...).CombinedOutput()
 			if err != nil {
@@ -85,8 +85,8 @@ func run(log *slog.Logger) error {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		// WriteTimeout must cover the reload command (up to 30s).
-		WriteTimeout: 60 * time.Second,
+		// WriteTimeout must cover one full reload command.
+		WriteTimeout: 2 * registrar.ReloadTimeout,
 		IdleTimeout:  120 * time.Second,
 	}
 
