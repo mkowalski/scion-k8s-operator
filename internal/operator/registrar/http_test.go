@@ -3,6 +3,7 @@ package registrar
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -147,5 +148,36 @@ func TestTimeoutOrdering(t *testing.T) {
 	if DefaultTimeout <= 2*registrar.ReloadTimeout {
 		t.Fatalf("DefaultTimeout (%v) must exceed 2*ReloadTimeout (%v)",
 			DefaultTimeout, 2*registrar.ReloadTimeout)
+	}
+}
+
+// TestHTTPEnsureTLS: with the server's certificate in CABundle the PUT
+// succeeds over TLS; without it the handshake is rejected (unknown
+// authority), and garbage PEM fails closed instead of silently falling back
+// to system roots.
+func TestHTTPEnsureTLS(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	caPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: srv.Certificate().Raw,
+	})
+
+	h := &HTTP{Endpoint: srv.URL, Token: "t", CABundle: caPEM}
+	if err := h.Ensure(context.Background(), nil); err != nil {
+		t.Fatalf("Ensure with CA bundle: %v", err)
+	}
+
+	h = &HTTP{Endpoint: srv.URL, Token: "t"}
+	if err := h.Ensure(context.Background(), nil); err == nil {
+		t.Fatal("Ensure without CA bundle succeeded against a self-signed server")
+	}
+
+	h = &HTTP{Endpoint: srv.URL, Token: "t", CABundle: []byte("not pem")}
+	err := h.Ensure(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), "no valid PEM") {
+		t.Fatalf("Ensure with garbage CA bundle = %v, want PEM error", err)
 	}
 }

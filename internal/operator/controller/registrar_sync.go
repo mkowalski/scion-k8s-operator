@@ -71,7 +71,9 @@ func nodesToSIGs(nodes []corev1.Node, selector map[string]string) (sigs []regist
 }
 
 // backendFor selects the registrar backend from spec. For http, the bearer
-// token is read from key "token" of the referenced Secret in scion-system.
+// token is read from key "token" of the referenced Secret in scion-system;
+// an optional "ca.crt" key supplies PEM roots trusted for the registrar's
+// TLS endpoint (private AS CA or self-signed server certificate).
 func (r *ScionNetworkReconciler) backendFor(ctx context.Context, sn *v1alpha1.ScionNetwork) (registrar.Backend, error) {
 	switch sn.Spec.Registrar.Backend {
 	case "", "manual":
@@ -86,7 +88,11 @@ func (r *ScionNetworkReconciler) backendFor(ctx context.Context, sn *v1alpha1.Sc
 			if !ok {
 				return nil, fmt.Errorf("credentials secret %q has no \"token\" key", ref.Name)
 			}
-			return &registrar.HTTP{Endpoint: sn.Spec.Registrar.Endpoint, Token: string(token)}, nil
+			return &registrar.HTTP{
+				Endpoint: sn.Spec.Registrar.Endpoint,
+				Token:    string(token),
+				CABundle: sec.Data["ca.crt"],
+			}, nil
 		}
 		// No secret ref: send an empty token; the AS-side service fails
 		// closed on empty tokens, surfacing the misconfiguration.

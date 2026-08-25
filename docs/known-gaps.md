@@ -96,10 +96,10 @@ route, and undeploy removes tunnel and registration state.
 1. Decide the privileged-vs-scoped-SELinux story for the agent (temporary
    privileged fix shipped; a tailored SELinux policy + pre-chowned state
    dir could restore NET_ADMIN-only).
-2. **CI.** No `.github/workflows` exists. Minimum: build, vet, unit tests,
-   envtest (setup-envtest), `test/integration/discovery_test.sh`,
-   `make bundle-check`, image builds. Aspirational: periodic e2e against a
-   dev AS.
+2. **CI.** `.github/workflows/ci.yaml` now runs gofmt/vet, build, unit
+   tests, the envtest suite, `test/integration/discovery_test.sh`,
+   `make bundle-check`, and the three image builds on push/PR.
+   Aspirational: periodic e2e against a dev AS.
 3. **API group.** `scion.mkowalski.github.io` is a placeholder tied to a
    personal GitHub Pages domain; revisit before any public release
    (CRD group changes are breaking — do it before anyone depends on
@@ -113,11 +113,12 @@ route, and undeploy removes tunnel and registration state.
 6. Node-churn hardening: Degraded currently flaps during rollouts (no 5m
    grace, TODO in `scionnetwork_controller.go`); pod-less nodes are counted
    in `status.nodes.total` but not named in `degraded`.
-7. Operational polish: TLS for the registrar (plaintext bearer token today —
-   trusted network assumed), metrics scrape auth on hostNetwork port 9465,
+7. Operational polish: metrics scrape auth on hostNetwork port 9465,
    dual-stack/IPv6 support (policy engine is deliberately IPv4-only),
    scale measurement of per-node SIG session fan-out (N nodes × M remote
-   SIGs).
+   SIGs). Registrar TLS is done (`--tls-cert`/`--tls-key` server-side,
+   `ca.crt` secret key for pinning), but plaintext HTTP is still permitted
+   with a warning; consider making TLS mandatory outside dev.
 8. Dependency watch: scionproto pinned at v0.15.1; `private/` package churn
    is expected on bumps — the two isolation files (`internal/agent/sig`,
    `internal/agent/daemonapi`) are the designated blast radius. The

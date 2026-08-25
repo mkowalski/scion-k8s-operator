@@ -96,15 +96,20 @@ After=network-online.target scion-control.service
 Environment=REGISTRAR_TOKEN=<token>
 ExecStart=/usr/local/bin/registrar \
     --topology /etc/scion/topology.json \
-    --listen :8642
+    --listen :8642 \
+    --tls-cert /etc/scion/registrar.crt \
+    --tls-key /etc/scion/registrar.key
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Security caveat: the bearer token travels in plaintext HTTP. Deploy the
-registrar on a trusted or tunneled network (e.g. WireGuard) or behind a
+Transport security: pass `--tls-cert`/`--tls-key` to serve HTTPS (a
+self-signed or private-CA certificate is fine — the operator pins it via
+the `ca.crt` secret key below). Without them the registrar serves plaintext
+HTTP, logs a warning, and the bearer token is exposed in transit; only do
+that on a trusted or tunneled network (e.g. WireGuard) or behind a
 TLS-terminating reverse proxy.
 
 Cluster-side configuration:
@@ -116,10 +121,15 @@ spec:
       - 192.168.111.0/24  # contains the registrar/control-service endpoint
   registrar:
     backend: http
-    endpoint: http://as-host:8642
+    endpoint: https://as-host:8642
     credentialsSecretRef:
-      name: scion-registrar-token   # key "token" in scion-system
+      name: scion-registrar-token   # keys "token" and optional "ca.crt" in scion-system
 ```
+
+The optional `ca.crt` key of the credentials secret holds PEM roots trusted
+for the endpoint (the self-signed server certificate or a private AS CA);
+without it the system roots are used. An invalid bundle fails the sync
+loudly rather than silently falling back.
 
 On every reconcile the operator PUTs the full desired set; sync results
 appear in `status.registrar` (`registeredNodes`, `lastSyncTime`,

@@ -159,7 +159,7 @@ How per-node SIG endpoints get registered with the AS. See
 |-------|-------------|
 | `backend` | `manual` (default), `http`, or `anapaya` (stub, not implemented). |
 | `endpoint` | Registration API base URL. Required for non-manual backends (CEL-enforced). |
-| `credentialsSecretRef` | Secret in `scion-system` with the backend credentials. For `http`, key `token` holds the bearer token. |
+| `credentialsSecretRef` | Secret in `scion-system` with the backend credentials. For `http`, key `token` holds the bearer token; optional key `ca.crt` holds PEM roots trusted for a TLS registrar endpoint. |
 
 ### Scheduling and image fields (optional)
 
@@ -189,10 +189,14 @@ use.
 
 ```sh
 oc -n scion-system create secret generic scion-registrar-token \
-    --from-literal=token=<same value as REGISTRAR_TOKEN on the AS side>
+    --from-literal=token=<same value as REGISTRAR_TOKEN on the AS side> \
+    --from-file=ca.crt=<registrar server certificate or private CA, PEM>
 ```
 
-Reference it from `spec.registrar.credentialsSecretRef.name`. If the ref
+Reference it from `spec.registrar.credentialsSecretRef.name`. The `ca.crt`
+key is only needed for TLS registrar endpoints whose certificate is not
+signed by a system root (see `--tls-cert`/`--tls-key` in
+[as-registration.md](as-registration.md)). If the ref
 is omitted, an empty token is sent and the AS-side service rejects it
 (fail-closed), which surfaces the misconfiguration in
 `status.registrar.lastError`.

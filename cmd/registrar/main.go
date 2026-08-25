@@ -9,11 +9,13 @@
 // channel), so the default reload command sends SIGHUP via systemd and
 // causes no control-plane downtime.
 //
-// Security note: the bearer token travels in plaintext HTTP. Deploy the
-// registrar on a trusted or tunneled network (e.g. WireGuard) or behind a
-// TLS-terminating reverse proxy. The registrar typically runs via systemd
-// directly on the AS host; a container image is provided, but the reload
-// command needs access to the host's systemd.
+// Security note: pass --tls-cert/--tls-key to serve HTTPS; the operator can
+// pin the certificate via the "ca.crt" key of its credentials secret. In
+// plaintext mode the bearer token is exposed in transit — deploy on a
+// trusted or tunneled network (e.g. WireGuard) or behind a TLS-terminating
+// reverse proxy. The registrar typically runs via systemd directly on the
+// AS host; a container image is provided, but the reload command needs
+// access to the host's systemd.
 package main
 
 import (
@@ -51,8 +53,16 @@ func run(log *slog.Logger) error {
 		reloadCmd = flag.String("reload-cmd", "systemctl kill -s HUP scion-control",
 			"command run after patching the topology; split on spaces "+
 				"(no shell quoting supported)")
+		tlsCert = flag.String("tls-cert", "", "path to a PEM server certificate; "+
+			"with --tls-key, serve HTTPS (strongly recommended: the bearer "+
+			"token is otherwise sent in plaintext)")
+		tlsKey = flag.String("tls-key", "", "path to the PEM private key for --tls-cert")
 	)
 	flag.Parse()
+
+	if (*tlsCert == "") != (*tlsKey == "") {
+		return errors.New("--tls-cert and --tls-key must be set together")
+	}
 
 	token := os.Getenv("REGISTRAR_TOKEN")
 	if token == "" {
@@ -95,8 +105,17 @@ func run(log *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("registrar listening", "addr", *listen, "topology", *topology, "prefix", *prefix)
-		if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		serve := httpSrv.ListenAndServe
+		scheme := "http"
+		if *tlsCert != "" {
+			serve = func() error { return httpSrv.ListenAndServeTLS(*tlsCert, *tlsKey) }
+			scheme = "https"
+		} else {
+			log.Warn("serving plaintext HTTP: the bearer token is not protected in transit; " +
+				"use --tls-cert/--tls-key or a trusted/tunneled network")
+		}
+		log.Info("registrar listening", "addr", *listen, "scheme", scheme, "topology", *topology, "prefix", *prefix)
+		if err := serve(); !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

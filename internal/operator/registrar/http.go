@@ -3,7 +3,10 @@ package registrar
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,12 +25,34 @@ const DefaultTimeout = 2*asregistrar.ReloadTimeout + 10*time.Second
 // PUT {Endpoint}/v1/sigs with a Bearer token; 204 means the topology was
 // patched and the control service reloaded.
 type HTTP struct {
-	// Endpoint is the service base URL, e.g. http://as-host:8642.
+	// Endpoint is the service base URL, e.g. https://as-host:8642.
 	Endpoint string
 	// Token is sent as "Authorization: Bearer <Token>".
 	Token string
-	// Client is optional; when nil, a client with DefaultTimeout is used.
+	// CABundle optionally holds PEM certificates trusted for the
+	// registrar's TLS endpoint (typically a private AS CA or the
+	// self-signed server certificate). When empty, the system roots are
+	// used. Invalid PEM is an error, never a silent fallback.
+	CABundle []byte
+	// Client is optional; when nil, a client with DefaultTimeout (and
+	// CABundle, if set) is used.
 	Client *http.Client
+}
+
+// client returns the configured client or builds the default one.
+func (h *HTTP) client() (*http.Client, error) {
+	if h.Client != nil {
+		return h.Client, nil
+	}
+	c := &http.Client{Timeout: DefaultTimeout}
+	if len(h.CABundle) > 0 {
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(h.CABundle) {
+			return nil, errors.New("registrar CA bundle contains no valid PEM certificates")
+		}
+		c.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
+	}
+	return c, nil
 }
 
 // Ensure replaces the full managed SIG set on the AS side.
@@ -47,9 +72,9 @@ func (h *HTTP) Ensure(ctx context.Context, sigs []SIG) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.Token)
 
-	c := h.Client
-	if c == nil {
-		c = &http.Client{Timeout: DefaultTimeout}
+	c, err := h.client()
+	if err != nil {
+		return err
 	}
 	resp, err := c.Do(req)
 	if err != nil {
