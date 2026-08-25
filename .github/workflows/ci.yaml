@@ -13,8 +13,8 @@ jobs:
     name: Build, lint and test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -44,8 +44,8 @@ jobs:
     name: OLM bundle up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -59,6 +59,6 @@ jobs:
       matrix:
         image: [agent, operator, registrar]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build ${{ matrix.image }} image
         run: docker build -f build/Dockerfile.${{ matrix.image }} -t scion-${{ matrix.image }}:ci .
