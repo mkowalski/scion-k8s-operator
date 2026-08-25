@@ -288,3 +288,25 @@ func TestDetectPodEgressPlatform(t *testing.T) {
 		})
 	}
 }
+
+func TestRouteAdvertisementAcceptedConditions(t *testing.T) {
+	defaultSelector := []any{map[string]any{"networkSelectionType": "DefaultNetwork"}}
+	conditionRA := func(condType, condStatus string) unstructured.Unstructured {
+		ra := routeAdvertisement("", []any{"PodNetwork"}, defaultSelector)
+		ra.Object["status"] = map[string]any{
+			"conditions": []any{map[string]any{"type": condType, "status": condStatus}},
+		}
+		return ra
+	}
+	if !hasAcceptedDefaultPodAdvertisement([]unstructured.Unstructured{conditionRA("Accepted", "True")}) {
+		t.Fatal("conditions-based Accepted=True was not detected")
+	}
+	for _, ra := range []unstructured.Unstructured{
+		conditionRA("Accepted", "False"),
+		conditionRA("Ready", "True"),
+	} {
+		if hasAcceptedDefaultPodAdvertisement([]unstructured.Unstructured{ra}) {
+			t.Fatalf("unexpected acceptance for %#v", ra.Object["status"])
+		}
+	}
+}

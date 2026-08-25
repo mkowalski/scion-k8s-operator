@@ -67,9 +67,10 @@ route, and undeploy removes tunnel and registration state.
    underlay network.** Advertising node /32s made the remote SIG route the
    underlay itself into the tunnel (verified live: 272GB looped through the
    remote tun, blackholing probes and discovery). `advertisement.nodeIP`
-   therefore now defaults to `false`; enable it only when node IPs are
-   disjoint from the underlay. Overlap detection that would refuse or warn
-   on an unsafe explicit `true` is still unimplemented.
+   therefore now defaults to `false`, and the operator refuses an explicit
+   `true` when any selected node's InternalIP falls inside
+   `acceptPolicy.underlayCIDRs` (Degraded/ApplyFailed). Remaining blind
+   spot: overlap with underlay networks not listed in `underlayCIDRs`.
 2. **Registry/pull-secret assumptions in e2e.** The agent ServiceAccount is
    operator-owned and garbage-collected with the ScionNetwork; per-SA
    `imagePullSecrets` links are lost across undeploy/configure cycles.
@@ -110,15 +111,18 @@ route, and undeploy removes tunnel and registration state.
 5. **Gateway readiness hook upstream.** `gateway.Run` exposes no "data plane
    up" signal; readiness is construction-based (decision D11). An upstream
    callback/channel would make readyz honest.
-6. Node-churn hardening: Degraded currently flaps during rollouts (no 5m
-   grace, TODO in `scionnetwork_controller.go`); pod-less nodes are counted
-   in `status.nodes.total` but not named in `degraded`.
-7. Operational polish: metrics scrape auth on hostNetwork port 9465,
-   dual-stack/IPv6 support (policy engine is deliberately IPv4-only),
-   scale measurement of per-node SIG session fan-out (N nodes × M remote
-   SIGs). Registrar TLS is done (`--tls-cert`/`--tls-key` server-side,
-   `ca.crt` secret key for pinning), but plaintext HTTP is still permitted
-   with a warning; consider making TLS mandatory outside dev.
+6. Node-churn hardening: Degraded now tolerates pods unready for under five
+   minutes (rollouts, reboots) before flagging `UnreadyAgents`; pod-less
+   nodes are still counted in `status.nodes.total` but not named in
+   `degraded` and are not age-tracked.
+7. Operational polish: dual-stack/IPv6 support (policy engine is
+   deliberately IPv4-only), scale measurement of per-node SIG session
+   fan-out (N nodes × M remote SIGs). Registrar TLS is done
+   (`--tls-cert`/`--tls-key` server-side, `ca.crt` secret key for pinning),
+   but plaintext HTTP is still permitted with a warning; consider making
+   TLS mandatory outside dev. Agent metrics on :9465 are now HTTPS with
+   TokenReview/SAR scraper auth on OpenShift (service-ca); vanilla
+   Kubernetes still serves plaintext without auth.
 8. Dependency watch: scionproto pinned at v0.15.1; `private/` package churn
    is expected on bumps — the two isolation files (`internal/agent/sig`,
    `internal/agent/daemonapi`) are the designated blast radius. The

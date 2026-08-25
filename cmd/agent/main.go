@@ -30,6 +30,7 @@ import (
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/daemonapi"
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/health"
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/kube"
+	"github.com/mkowalski/scion-k8s-operator/internal/agent/metricsauth"
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/policy"
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/sig"
 )
@@ -184,7 +185,32 @@ func run(log *slog.Logger) error {
 
 	srv := &http.Server{Addr: cfg.MetricsAddr, Handler: mux}
 	g.Go(func() error {
-		log.Info("serving metrics/health", "addr", cfg.MetricsAddr)
+		if cfg.MetricsTLSCert != "" {
+			// service-ca populates the mounted secret asynchronously
+			// after pod start; wait for the files instead of racing.
+			if err := waitForFiles(ctx, log, cfg.MetricsTLSCert, cfg.MetricsTLSKey); err != nil {
+				return err
+			}
+			rc, err := rest.InClusterConfig()
+			if err != nil {
+				return fmt.Errorf("in-cluster config for metrics auth: %w", err)
+			}
+			cs, err := kubernetes.NewForConfig(rc)
+			if err != nil {
+				return err
+			}
+			// Probes bypass auth (kubelet sends no token and must not
+			// depend on the apiserver); everything else on this mux —
+			// /metrics and the gateway debug pages — requires a token
+			// allowed to `get` /metrics.
+			srv.Handler = metricsauth.Middleware(mux, cs, "/healthz", "/readyz")
+			log.Info("serving metrics/health", "addr", cfg.MetricsAddr, "scheme", "https", "auth", "kubernetes")
+			if err := srv.ListenAndServeTLS(cfg.MetricsTLSCert, cfg.MetricsTLSKey); !errors.Is(err, http.ErrServerClosed) {
+				return err
+			}
+			return nil
+		}
+		log.Info("serving metrics/health", "addr", cfg.MetricsAddr, "scheme", "http", "auth", "none")
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
@@ -311,4 +337,29 @@ func renderPolicies(in policy.Input, trafficFile, routingFile string) error {
 func closeOnce(ch chan<- struct{}) func() {
 	var once sync.Once
 	return func() { once.Do(func() { close(ch) }) }
+}
+
+// waitForFiles blocks until every path exists (or ctx is canceled). Used for
+// the metrics TLS keypair: the OpenShift service-ca controller fills the
+// mounted secret shortly after pod creation, so the very first pod start may
+// briefly observe empty mounts.
+func waitForFiles(ctx context.Context, log *slog.Logger, paths ...string) error {
+	for {
+		missing := ""
+		for _, p := range paths {
+			if _, err := os.Stat(p); err != nil {
+				missing = p
+				break
+			}
+		}
+		if missing == "" {
+			return nil
+		}
+		log.Info("waiting for TLS material", "path", missing)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
 }

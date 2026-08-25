@@ -147,12 +147,14 @@ func (r *ScionNetworkReconciler) syncRegistrar(ctx context.Context, sn *v1alpha1
 }
 
 // degradedReason decides the Degraded condition (state, reason, message)
-// from agent readiness, platform routing support, and registrar sync state,
-// in that order. Deciding reason and message together keeps them paired: a
-// new reason cannot silently fall back to an unrelated message.
-func degradedReason(ready, total int32, unreadyMsg string, platform podEgressPlatform, regFailed bool, regLastError, backend string) (bool, string, string) {
+// from aged-out unready agents, platform routing support, and registrar sync
+// state, in that order. Deciding reason and message together keeps them
+// paired: a new reason cannot silently fall back to an unrelated message.
+// degradedAgents counts pods unready beyond the grace period (see
+// unreadyGracePeriod); freshly unready pods do not degrade the network.
+func degradedReason(degradedAgents int, unreadyMsg string, platform podEgressPlatform, regFailed bool, regLastError, backend string) (bool, string, string) {
 	regDegraded := regFailed && backend != "" && backend != "manual"
-	if ready < total {
+	if degradedAgents > 0 {
 		return true, "UnreadyAgents", unreadyMsg
 	}
 	if platform.Status == metav1.ConditionFalse {

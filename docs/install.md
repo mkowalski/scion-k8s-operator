@@ -126,7 +126,7 @@ Which local prefixes each node advertises into SCION via SGRP.
 | Field | Description |
 |-------|-------------|
 | `podCIDR` | Advertise each node's pod CIDR. Default `true`; required for return traffic to source-preserved pods. |
-| `nodeIP` | Advertise each node's IP (/32). Default `false`: advertising a node IP that is also a SCION underlay address creates recursive routing. Enable only when node IPs are disjoint from the underlay. |
+| `nodeIP` | Advertise each node's IP (/32). Default `false`: advertising a node IP that is also a SCION underlay address creates recursive routing. The operator refuses an explicit `true` when a selected node's IP falls inside `acceptPolicy.underlayCIDRs` (Degraded, reason `ApplyFailed`). |
 
 ### spec.acceptPolicy (required)
 
@@ -214,6 +214,15 @@ oc debug node/<node> -- chroot /host ip route get <discovery-or-registrar-ip>
 Expect `Available=True`, `Progressing=False`, `Degraded=False`,
 `status.isdAS` set, `status.nodes.ready == status.nodes.total`, a learned
 remote prefix selecting `scion0`, and every discovery/registrar/underlay
-destination selecting the normal interface. Agent metrics are scraped on port
-9465; alerts `ScionNodeAgentDown`, `ScionNodeAgentAbsent`, and
-`ScionNetworkDegraded` are defined in `config/manifests/monitoring.yaml`.
+destination selecting the normal interface. Degraded tolerates pods unready
+for under five minutes (rollouts, reboots); only longer outages flip it.
+
+Agent metrics are scraped on port 9465; alerts `ScionNodeAgentDown`,
+`ScionNodeAgentAbsent`, and `ScionNetworkDegraded` are defined in
+`config/manifests/monitoring.yaml`. On OpenShift the metrics endpoint is
+HTTPS with a service-ca certificate and requires a Bearer token authorized
+to `get` the `/metrics` non-resource URL (the agent validates scrapers via
+TokenReview/SubjectAccessReview, like kube-rbac-proxy); the shipped
+`scion-metrics-reader` ServiceAccount, token Secret, and ClusterRole in
+monitoring.yaml wire this up for the ServiceMonitor. On vanilla Kubernetes
+(no service-ca) the endpoint stays plaintext and unauthenticated.

@@ -19,7 +19,7 @@ func testSN() *v1alpha1.ScionNetwork {
 
 func TestDaemonSet(t *testing.T) {
 	sn := testSN()
-	ds := DaemonSet(sn, "quay.io/mkowalski/scion-node-agent:0.1.0", []string{"10.128.0.0/14", "172.30.0.0/16"})
+	ds := DaemonSet(sn, "quay.io/mkowalski/scion-node-agent:0.1.0", []string{"10.128.0.0/14", "172.30.0.0/16"}, false)
 	if !ds.Spec.Template.Spec.HostNetwork {
 		t.Fatal("agent must be hostNetwork")
 	}
@@ -45,7 +45,7 @@ func TestDaemonSetBoolEnvDefaults(t *testing.T) {
 	sn := testSN()
 	// nil *bool -> podCIDR defaults on, nodeIP defaults off (fail-safe:
 	// advertising an underlay-sharing node IP creates a routing loop)
-	ds := DaemonSet(sn, "img", nil)
+	ds := DaemonSet(sn, "img", nil, false)
 	env := map[string]string{}
 	for _, e := range ds.Spec.Template.Spec.Containers[0].Env {
 		env[e.Name] = e.Value
@@ -55,7 +55,7 @@ func TestDaemonSetBoolEnvDefaults(t *testing.T) {
 	}
 	f := false
 	sn.Spec.Advertisement.PodCIDR = &f
-	ds = DaemonSet(sn, "img", nil)
+	ds = DaemonSet(sn, "img", nil, false)
 	env = map[string]string{}
 	for _, e := range ds.Spec.Template.Spec.Containers[0].Env {
 		env[e.Name] = e.Value
@@ -66,7 +66,7 @@ func TestDaemonSetBoolEnvDefaults(t *testing.T) {
 }
 
 func TestDaemonSetNodeNameDownwardAPI(t *testing.T) {
-	ds := DaemonSet(testSN(), "img", nil)
+	ds := DaemonSet(testSN(), "img", nil, false)
 	for _, e := range ds.Spec.Template.Spec.Containers[0].Env {
 		if e.Name == "NODE_NAME" {
 			if e.ValueFrom == nil || e.ValueFrom.FieldRef == nil || e.ValueFrom.FieldRef.FieldPath != "spec.nodeName" {
@@ -82,7 +82,7 @@ func TestDaemonSetSchedulingAndTolerations(t *testing.T) {
 	sn := testSN()
 	sn.Spec.NodeSelector = map[string]string{"kubernetes.io/os": "linux"}
 	sn.Spec.Tolerations = []corev1.Toleration{{Key: "custom", Operator: corev1.TolerationOpEqual, Value: "x"}}
-	ds := DaemonSet(sn, "img", nil)
+	ds := DaemonSet(sn, "img", nil, false)
 	ps := ds.Spec.Template.Spec
 	if ps.NodeSelector["kubernetes.io/os"] != "linux" {
 		t.Fatalf("nodeSelector not passed through: %v", ps.NodeSelector)
@@ -106,7 +106,7 @@ func TestDaemonSetSchedulingAndTolerations(t *testing.T) {
 }
 
 func TestDaemonSetProbesAndSecurity(t *testing.T) {
-	ds := DaemonSet(testSN(), "img", nil)
+	ds := DaemonSet(testSN(), "img", nil, false)
 	c := ds.Spec.Template.Spec.Containers[0]
 	if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet == nil ||
 		c.ReadinessProbe.HTTPGet.Path != "/readyz" || c.ReadinessProbe.HTTPGet.Port.IntValue() != 9465 {
@@ -133,7 +133,7 @@ func TestDaemonSetProbesAndSecurity(t *testing.T) {
 }
 
 func TestDaemonSetVolumes(t *testing.T) {
-	ds := DaemonSet(testSN(), "img", nil)
+	ds := DaemonSet(testSN(), "img", nil, false)
 	vols := map[string]corev1.Volume{}
 	for _, v := range ds.Spec.Template.Spec.Volumes {
 		vols[v.Name] = v
@@ -161,7 +161,7 @@ func TestDaemonSetVolumes(t *testing.T) {
 func TestDaemonSetPinnedTRCSecret(t *testing.T) {
 	sn := testSN()
 	sn.Spec.Bootstrap.SecretRef = &corev1.LocalObjectReference{Name: "trc-pins"}
-	ds := DaemonSet(sn, "img", nil)
+	ds := DaemonSet(sn, "img", nil, false)
 	var vol *corev1.Volume
 	for i, v := range ds.Spec.Template.Spec.Volumes {
 		if v.Name == "pinned-trcs" {
@@ -202,7 +202,9 @@ func TestClusterRole(t *testing.T) {
 	if cr.Name != "scion-node-agent" {
 		t.Fatalf("name: %q", cr.Name)
 	}
-	if len(cr.Rules) != 1 {
+	// Node read plus TokenReview/SubjectAccessReview for metrics scraper
+	// auth — nothing else.
+	if len(cr.Rules) != 3 {
 		t.Fatalf("rules: %+v", cr.Rules)
 	}
 	r := cr.Rules[0]
@@ -262,5 +264,46 @@ func TestNamespaceObj(t *testing.T) {
 		if ns.Labels[k] != "privileged" {
 			t.Fatalf("label %s: %q", k, ns.Labels[k])
 		}
+	}
+}
+
+func TestDaemonSetMetricsTLS(t *testing.T) {
+	ds := DaemonSet(testSN(), "img", nil, true)
+	c := ds.Spec.Template.Spec.Containers[0]
+	env := map[string]string{}
+	for _, e := range c.Env {
+		env[e.Name] = e.Value
+	}
+	if env["SCION_METRICS_TLS_CERT"] != "/etc/scion-metrics-tls/tls.crt" ||
+		env["SCION_METRICS_TLS_KEY"] != "/etc/scion-metrics-tls/tls.key" {
+		t.Fatalf("TLS env: %v", env)
+	}
+	found := false
+	for _, v := range ds.Spec.Template.Spec.Volumes {
+		if v.Name == "metrics-tls" {
+			found = true
+			if v.Secret == nil || v.Secret.SecretName != "scion-node-agent-metrics-tls" ||
+				v.Secret.Optional == nil || !*v.Secret.Optional {
+				t.Fatalf("metrics-tls volume: %+v", v)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("metrics-tls volume missing")
+	}
+	if c.ReadinessProbe.HTTPGet.Scheme != "HTTPS" || c.LivenessProbe.HTTPGet.Scheme != "HTTPS" {
+		t.Fatalf("probe schemes: %s / %s", c.ReadinessProbe.HTTPGet.Scheme, c.LivenessProbe.HTTPGet.Scheme)
+	}
+
+	// TLS off: no mount, no env, HTTP probes.
+	ds = DaemonSet(testSN(), "img", nil, false)
+	c = ds.Spec.Template.Spec.Containers[0]
+	for _, e := range c.Env {
+		if e.Name == "SCION_METRICS_TLS_CERT" || e.Name == "SCION_METRICS_TLS_KEY" {
+			t.Fatalf("unexpected TLS env %s without metricsTLS", e.Name)
+		}
+	}
+	if c.ReadinessProbe.HTTPGet.Scheme == "HTTPS" {
+		t.Fatal("HTTPS probe scheme without metricsTLS")
 	}
 }

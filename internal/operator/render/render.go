@@ -23,6 +23,11 @@ const (
 	// Namespace is where all namespaced operator-owned objects live.
 	Namespace = "scion-system"
 	agentName = "scion-node-agent"
+	// metricsTLSSecret is filled by the OpenShift service-ca controller
+	// via the serving-cert-secret-name annotation on the metrics Service
+	// (config/manifests/monitoring.yaml).
+	metricsTLSSecret = "scion-node-agent-metrics-tls"
+	metricsTLSDir    = "/etc/scion-metrics-tls"
 	// stateDir is the hostPath cache used by the agent (SCION_STATE_DIR
 	// default in internal/agent/config).
 	stateDir = "/var/lib/scion-node-agent"
@@ -50,13 +55,20 @@ func boolStr(b bool) string {
 	return strconv.FormatBool(b)
 }
 
-// probe builds an HTTP probe against the agent metrics/health port.
-func probe(path string) *corev1.Probe {
+// probe builds a probe against the agent metrics/health port. The scheme
+// must match how the agent serves the port (HTTPS when metrics TLS is on;
+// kubelet does not verify the certificate).
+func probe(path string, tls bool) *corev1.Probe {
+	scheme := corev1.URISchemeHTTP
+	if tls {
+		scheme = corev1.URISchemeHTTPS
+	}
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
-				Path: path,
-				Port: intstr.FromInt32(metricsPort),
+				Path:   path,
+				Port:   intstr.FromInt32(metricsPort),
+				Scheme: scheme,
 			},
 		},
 	}
@@ -64,8 +76,11 @@ func probe(path string) *corev1.Probe {
 
 // DaemonSet renders the node-agent DaemonSet for the given ScionNetwork.
 // forbiddenCIDRs is the merged list (spec + cluster/service networks)
-// computed by the controller.
-func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string) *appsv1.DaemonSet {
+// computed by the controller. metricsTLS mounts the service-ca-issued
+// keypair and switches the agent to authenticated HTTPS metrics; the
+// controller enables it on OpenShift only (service-ca fills the secret
+// referenced by the annotated metrics Service).
+func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string, metricsTLS bool) *appsv1.DaemonSet {
 	hostPathChar := corev1.HostPathCharDev
 	hostPathDir := corev1.HostPathDirectoryOrCreate
 	// TODO(live-e2e): NET_ADMIN-only is insufficient on RHCOS: the
@@ -115,6 +130,25 @@ func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string)
 		mounts = append(mounts, corev1.VolumeMount{
 			Name: "pinned-trcs", MountPath: pinnedTRCsDir, ReadOnly: true})
 	}
+	if metricsTLS {
+		// Optional: the secret is created by service-ca after the
+		// annotated metrics Service is applied. The agent waits for the
+		// files and stays unready (never falls back to plaintext) if
+		// they do not appear, which surfaces a missing Service or
+		// service-ca as unready pods instead of an insecure endpoint.
+		optional := true
+		volumes = append(volumes, corev1.Volume{
+			Name: "metrics-tls",
+			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+				SecretName: metricsTLSSecret, Optional: &optional}},
+		})
+		mounts = append(mounts, corev1.VolumeMount{
+			Name: "metrics-tls", MountPath: metricsTLSDir, ReadOnly: true})
+		env = append(env,
+			corev1.EnvVar{Name: "SCION_METRICS_TLS_CERT", Value: metricsTLSDir + "/tls.crt"},
+			corev1.EnvVar{Name: "SCION_METRICS_TLS_KEY", Value: metricsTLSDir + "/tls.key"},
+		)
+	}
 	l := labels()
 	return &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: agentName, Namespace: Namespace, Labels: l},
@@ -144,8 +178,8 @@ func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string)
 							},
 						},
 						VolumeMounts:   mounts,
-						ReadinessProbe: probe("/readyz"),
-						LivenessProbe:  probe("/healthz"),
+						ReadinessProbe: probe("/readyz", metricsTLS),
+						LivenessProbe:  probe("/healthz", metricsTLS),
 					}},
 					Volumes: volumes,
 				},
@@ -161,8 +195,9 @@ func ServiceAccount() *corev1.ServiceAccount {
 	}
 }
 
-// ClusterRole renders the agent ClusterRole; the agent only needs to read
-// its own Node object (pod CIDR, addresses).
+// ClusterRole renders the agent ClusterRole: reading its own Node object
+// (pod CIDR, addresses) plus TokenReview/SubjectAccessReview creation to
+// authenticate metrics scrapers (see internal/agent/metricsauth).
 func ClusterRole() *rbacv1.ClusterRole {
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: agentName, Labels: labels()},
@@ -170,6 +205,14 @@ func ClusterRole() *rbacv1.ClusterRole {
 			APIGroups: []string{""},
 			Resources: []string{"nodes"},
 			Verbs:     []string{"get"},
+		}, {
+			APIGroups: []string{"authentication.k8s.io"},
+			Resources: []string{"tokenreviews"},
+			Verbs:     []string{"create"},
+		}, {
+			APIGroups: []string{"authorization.k8s.io"},
+			Resources: []string{"subjectaccessreviews"},
+			Verbs:     []string{"create"},
 		}},
 	}
 }

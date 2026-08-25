@@ -5,6 +5,13 @@ metadata:
   namespace: scion-system
   labels:
     app: scion-node-agent
+  annotations:
+    # On OpenShift, service-ca issues a serving certificate into this
+    # secret; the operator mounts it into the agent DaemonSet, which then
+    # serves authenticated HTTPS metrics (TokenReview + SAR on /metrics).
+    # Harmless on vanilla Kubernetes (no service-ca: annotation ignored,
+    # agent serves plaintext without auth).
+    service.beta.openshift.io/serving-cert-secret-name: scion-node-agent-metrics-tls
 spec:
   selector:
     app: scion-node-agent
@@ -42,6 +49,21 @@ spec:
   endpoints:
     - port: metrics
       interval: 30s
+      scheme: https
+      tlsConfig:
+        # service-ca bundle, auto-injected into every namespace.
+        ca:
+          configMap:
+            name: openshift-service-ca.crt
+            key: service-ca.crt
+        # The scrape target is the node IP (hostNetwork); the certificate
+        # is issued for the Service DNS name.
+        serverName: scion-node-agent-metrics.scion-system.svc
+      authorization:
+        type: Bearer
+        credentials:
+          name: scion-metrics-reader-token
+          key: token
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -57,6 +79,53 @@ spec:
   endpoints:
     - port: metrics
       interval: 30s
+---
+# Scraper identity: the agent authorizes any token whose subject may `get`
+# the /metrics non-resource URL. Prometheus presents this ServiceAccount's
+# token (referenced by the ServiceMonitor above).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scion-metrics-reader
+  namespace: scion-system
+  labels:
+    app: scion-node-agent
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: scion-metrics-reader-token
+  namespace: scion-system
+  labels:
+    app: scion-node-agent
+  annotations:
+    kubernetes.io/service-account.name: scion-metrics-reader
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: scion-metrics-reader
+  labels:
+    app: scion-node-agent
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: scion-metrics-reader
+  labels:
+    app: scion-node-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: scion-metrics-reader
+subjects:
+  - kind: ServiceAccount
+    name: scion-metrics-reader
+    namespace: scion-system
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule

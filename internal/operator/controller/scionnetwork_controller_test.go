@@ -469,7 +469,7 @@ func TestClusterForbiddenCIDRsIncludesUnderlay(t *testing.T) {
 	sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"192.168.111.0/24", "fd00::/64"}
 	c, scheme := newFakeClient(t)
 	r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
-	got, err := r.clusterForbiddenCIDRs(context.Background(), sn)
+	got, _, err := r.clusterForbiddenCIDRs(context.Background(), sn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,7 +509,7 @@ func TestClusterForbiddenCIDRsRejectsInvalidSpecEntries(t *testing.T) {
 			tc.mutate(sn)
 			c, scheme := newFakeClient(t)
 			r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
-			_, err := r.clusterForbiddenCIDRs(context.Background(), sn)
+			_, _, err := r.clusterForbiddenCIDRs(context.Background(), sn)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("clusterForbiddenCIDRs error = %v, want mention of %s", err, tc.want)
 			}
@@ -600,6 +600,162 @@ func TestUpdateStatusPlatformGating(t *testing.T) {
 		dg := cond(sn, "Degraded")
 		if dg == nil || dg.Status != metav1.ConditionFalse {
 			t.Fatalf("Degraded condition = %+v, want False", dg)
+		}
+	})
+}
+
+// TestCRDRejectsInvalidCIDRs: the CEL isCIDR rule must reject values the
+// legacy pattern admits, at admission time.
+func TestCRDRejectsInvalidCIDRs(t *testing.T) {
+	skipIfNoEnvtest(t)
+	for _, cidr := range []string{"300.1.1.1/8", "10.0.0.0/33"} {
+		sn := newScionNetwork()
+		sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{cidr}
+		err := k8sClient.Create(ctx, sn)
+		if err == nil {
+			deleteAndWait(t, sn)
+			t.Fatalf("create with underlayCIDRs=%q succeeded, want admission rejection", cidr)
+		}
+		if !apierrors.IsInvalid(err) || !strings.Contains(err.Error(), "must be a valid IPv4 CIDR") {
+			t.Fatalf("create with underlayCIDRs=%q: %v, want CEL isCIDR rejection", cidr, err)
+		}
+	}
+}
+
+func TestValidateNodeIPAdvertisement(t *testing.T) {
+	node := func(name, ip string, labels map[string]string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: labels},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: ip},
+			}},
+		}
+	}
+	enabled := true
+	tests := []struct {
+		name    string
+		mutate  func(*v1alpha1.ScionNetwork)
+		nodes   []client.Object
+		wantErr string
+	}{
+		{
+			name: "overlap refused",
+			mutate: func(sn *v1alpha1.ScionNetwork) {
+				sn.Spec.Advertisement.NodeIP = &enabled
+				sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"192.168.111.0/24"}
+			},
+			nodes:   []client.Object{node("n1", "192.168.111.20", nil)},
+			wantErr: "routing loop",
+		},
+		{
+			name: "disjoint node IP allowed",
+			mutate: func(sn *v1alpha1.ScionNetwork) {
+				sn.Spec.Advertisement.NodeIP = &enabled
+				sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"192.168.111.0/24"}
+			},
+			nodes: []client.Object{node("n1", "10.0.10.20", nil)},
+		},
+		{
+			name: "disabled nodeIP skips check",
+			mutate: func(sn *v1alpha1.ScionNetwork) {
+				sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"192.168.111.0/24"}
+			},
+			nodes: []client.Object{node("n1", "192.168.111.20", nil)},
+		},
+		{
+			name: "unselected node ignored",
+			mutate: func(sn *v1alpha1.ScionNetwork) {
+				sn.Spec.Advertisement.NodeIP = &enabled
+				sn.Spec.NodeSelector = map[string]string{"role": "edge"}
+				sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"192.168.111.0/24"}
+			},
+			nodes: []client.Object{node("n1", "192.168.111.20", nil)},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sn := newScionNetwork()
+			tc.mutate(sn)
+			c, scheme := newFakeClient(t, tc.nodes...)
+			r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+			err := r.validateNodeIPAdvertisement(context.Background(), sn)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("error = %v, want mention of %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestUpdateStatusUnreadyGrace: freshly unready pods must not mark Degraded
+// (rollout flapping), while pods unready beyond the grace period must.
+func TestUpdateStatusUnreadyGrace(t *testing.T) {
+	unreadyPod := func(since time.Duration) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: render.Namespace,
+				Name:      "agent-1",
+				Labels:    map[string]string{"app": "scion-node-agent"},
+			},
+			Spec: corev1.PodSpec{NodeName: "node1"},
+			Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{
+				Type:               corev1.PodReady,
+				Status:             corev1.ConditionFalse,
+				LastTransitionTime: metav1.NewTime(time.Now().Add(-since)),
+			}}},
+		}
+	}
+	ds := func() *appsv1.DaemonSet {
+		return &appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{Namespace: render.Namespace, Name: "scion-node-agent"},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1},
+		}
+	}
+	platform := podEgressPlatform{Status: metav1.ConditionTrue}
+	cond := func(sn *v1alpha1.ScionNetwork, condType string) *metav1.Condition {
+		for i := range sn.Status.Conditions {
+			if sn.Status.Conditions[i].Type == condType {
+				return &sn.Status.Conditions[i]
+			}
+		}
+		return nil
+	}
+
+	t.Run("fresh unready pod within grace", func(t *testing.T) {
+		sn := newScionNetwork()
+		c, scheme := newFakeClient(t, sn, unreadyPod(time.Minute), ds())
+		r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+		available, err := r.updateStatus(context.Background(), sn, v1alpha1.RegistrarStatus{}, false, platform)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if available {
+			t.Fatal("available = true with an unready pod")
+		}
+		if dg := cond(sn, "Degraded"); dg == nil || dg.Status != metav1.ConditionFalse {
+			t.Fatalf("Degraded = %+v, want False within grace", dg)
+		}
+		if len(sn.Status.Nodes.Degraded) != 0 {
+			t.Fatalf("status.nodes.degraded = %v, want empty within grace", sn.Status.Nodes.Degraded)
+		}
+	})
+
+	t.Run("unready beyond grace degrades", func(t *testing.T) {
+		sn := newScionNetwork()
+		c, scheme := newFakeClient(t, sn, unreadyPod(10*time.Minute), ds())
+		r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+		if _, err := r.updateStatus(context.Background(), sn, v1alpha1.RegistrarStatus{}, false, platform); err != nil {
+			t.Fatal(err)
+		}
+		dg := cond(sn, "Degraded")
+		if dg == nil || dg.Status != metav1.ConditionTrue || dg.Reason != "UnreadyAgents" ||
+			!strings.Contains(dg.Message, "node1") {
+			t.Fatalf("Degraded = %+v, want True/UnreadyAgents naming node1", dg)
+		}
+		if !slices.Contains(sn.Status.Nodes.Degraded, "node1") {
+			t.Fatalf("status.nodes.degraded = %v, want node1", sn.Status.Nodes.Degraded)
 		}
 	})
 }

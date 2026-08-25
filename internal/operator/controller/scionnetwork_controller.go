@@ -85,8 +85,12 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	forbidden, err := r.clusterForbiddenCIDRs(ctx, sn)
+	forbidden, openshift, err := r.clusterForbiddenCIDRs(ctx, sn)
 	if err != nil {
+		r.markApplyFailed(ctx, sn, err)
+		return ctrl.Result{}, err
+	}
+	if err := r.validateNodeIPAdvertisement(ctx, sn); err != nil {
 		r.markApplyFailed(ctx, sn, err)
 		return ctrl.Result{}, err
 	}
@@ -99,7 +103,7 @@ func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		image = r.AgentImage
 	}
 
-	if err := r.apply(ctx, sn, image, forbidden); err != nil {
+	if err := r.apply(ctx, sn, image, forbidden, openshift); err != nil {
 		r.markApplyFailed(ctx, sn, err)
 		return ctrl.Result{}, err
 	}
@@ -253,7 +257,7 @@ func (r *ScionNetworkReconciler) markApplyFailed(ctx context.Context, sn *v1alph
 // apply creates or updates all managed objects. Every object except the
 // Namespace carries an owner reference to the ScionNetwork; a cluster-scoped
 // owner is valid for both cluster-scoped and namespaced dependents.
-func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNetwork, image string, forbidden []string) error {
+func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNetwork, image string, forbidden []string, metricsTLS bool) error {
 	// Namespace first: the namespaced objects need it. Deliberately NO
 	// owner reference here: the operator Deployment itself runs in
 	// scion-system (shipped by config/manifests), so garbage-collecting the
@@ -300,8 +304,8 @@ func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNe
 		return fmt.Errorf("apply clusterrolebinding: %w", err)
 	}
 
-	ds := render.DaemonSet(sn, image, forbidden)
-	want := render.DaemonSet(sn, image, forbidden)
+	ds := render.DaemonSet(sn, image, forbidden, metricsTLS)
+	want := render.DaemonSet(sn, image, forbidden, metricsTLS)
 	if err := r.applyObject(ctx, sn, ds, func() error {
 		if ds.Labels == nil {
 			ds.Labels = map[string]string{}
@@ -365,14 +369,17 @@ func (r *ScionNetworkReconciler) applyObjectNoOwner(ctx context.Context, obj cli
 // dropped, which would widen the accepted address space. Only valid IPv6
 // prefixes are skipped silently. Cluster-derived values are filtered to IPv4
 // without error, since dual-stack clusters legitimately carry IPv6 ranges.
-func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *v1alpha1.ScionNetwork) ([]string, error) {
+// The second return reports whether the OpenShift network config API was
+// found, which the caller uses as the OpenShift signal (e.g. to enable
+// service-ca-backed metrics TLS).
+func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *v1alpha1.ScionNetwork) ([]string, bool, error) {
 	out, err := specIPv4CIDRs("forbiddenCIDRs", sn.Spec.AcceptPolicy.ForbiddenCIDRs)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	underlay, err := specIPv4CIDRs("underlayCIDRs", sn.Spec.AcceptPolicy.UnderlayCIDRs)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out = append(out, underlay...)
 
@@ -399,10 +406,11 @@ func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *
 		}
 	case apierrors.IsNotFound(err) || meta.IsNoMatchError(err):
 		// Vanilla Kubernetes: no OpenShift network config.
+		return dedupe(out), false, nil
 	default:
-		return nil, fmt.Errorf("read openshift network config: %w", err)
+		return nil, false, fmt.Errorf("read openshift network config: %w", err)
 	}
-	return dedupe(out), nil
+	return dedupe(out), true, nil
 }
 
 // specIPv4CIDRs validates user-provided CIDR entries from the ScionNetwork
@@ -421,6 +429,56 @@ func specIPv4CIDRs(field string, cidrs []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// validateNodeIPAdvertisement refuses an explicitly enabled
+// advertisement.nodeIP when any selected node's InternalIP falls inside
+// spec.acceptPolicy.underlayCIDRs: advertising such a /32 makes the remote
+// SIG route the SCION underlay itself into the tunnel (verified live: a
+// routing loop that blackholed probes and discovery). Fail-closed like the
+// CIDR validation: the error surfaces as Degraded/ApplyFailed.
+func (r *ScionNetworkReconciler) validateNodeIPAdvertisement(ctx context.Context, sn *v1alpha1.ScionNetwork) error {
+	if sn.Spec.Advertisement.NodeIP == nil || !*sn.Spec.Advertisement.NodeIP {
+		return nil
+	}
+	var prefixes []netip.Prefix
+	for _, cidr := range sn.Spec.AcceptPolicy.UnderlayCIDRs {
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			// clusterForbiddenCIDRs already rejected it with a better message.
+			continue
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	if len(prefixes) == 0 {
+		return nil
+	}
+	nodes := &corev1.NodeList{}
+	if err := r.List(ctx, nodes, client.MatchingLabels(sn.Spec.NodeSelector)); err != nil {
+		return fmt.Errorf("list nodes for nodeIP advertisement check: %w", err)
+	}
+	for i := range nodes.Items {
+		n := &nodes.Items[i]
+		for _, a := range n.Status.Addresses {
+			if a.Type != corev1.NodeInternalIP {
+				continue
+			}
+			ip, err := netip.ParseAddr(a.Address)
+			if err != nil {
+				continue
+			}
+			for _, prefix := range prefixes {
+				if prefix.Contains(ip) {
+					return fmt.Errorf(
+						"advertisement.nodeIP is enabled but node %s IP %s is inside underlay CIDR %s; "+
+							"advertising it would route the SCION underlay into the tunnel (routing loop) — "+
+							"disable spec.advertisement.nodeIP or move node IPs off the underlay",
+						n.Name, a.Address, prefix)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func isIPv4CIDR(cidr string) bool {
@@ -455,17 +513,26 @@ func (r *ScionNetworkReconciler) updateStatus(
 	}
 	var ready int32
 	var degraded []string
+	now := time.Now()
 	for i := range pods.Items {
 		p := &pods.Items[i]
 		if podReady(p) {
 			ready++
-		} else {
-			name := p.Spec.NodeName
-			if name == "" {
-				name = p.Name
-			}
-			degraded = append(degraded, name)
+			continue
 		}
+		// Grace period: pods routinely cycle through unready during
+		// rollouts and node reboots; only pods unready beyond the grace
+		// window mark the network Degraded (Available/Progressing still
+		// reflect them immediately, and the !available requeue re-checks
+		// every 30s until the grace expires or the pod recovers).
+		if now.Sub(unreadySince(p)) < unreadyGracePeriod {
+			continue
+		}
+		name := p.Spec.NodeName
+		if name == "" {
+			name = p.Name
+		}
+		degraded = append(degraded, name)
 	}
 	slices.Sort(degraded)
 
@@ -487,11 +554,9 @@ func (r *ScionNetworkReconciler) updateStatus(
 	agentsAvailable := total > 0 && ready == total
 	available := agentsAvailable && platform.Status != metav1.ConditionFalse
 	progressing := !dsCurrent || total == 0 || ready < total
-	// TODO: refine Degraded to "pod unready for >5m" once pod transition
-	// timestamps are tracked; for now any unready pod marks Degraded.
-	isDegraded, reason, degradedMsg := degradedReason(ready, total,
-		fmt.Sprintf("unready nodes: %v", degraded), platform, regFailed,
-		reg.LastError, sn.Spec.Registrar.Backend)
+	isDegraded, reason, degradedMsg := degradedReason(len(degraded),
+		fmt.Sprintf("nodes unready for over %v: %v", unreadyGracePeriod, degraded),
+		platform, regFailed, reg.LastError, sn.Spec.Registrar.Backend)
 
 	sn.Status.Nodes = v1alpha1.NodeSummary{Ready: ready, Total: total, Degraded: degraded}
 	sn.Status.Registrar = reg
@@ -536,6 +601,24 @@ func podReady(p *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// unreadyGracePeriod is how long an agent pod may be unready (rollouts,
+// node reboots) before it marks the ScionNetwork Degraded. Nodes missing a
+// pod entirely are not age-tracked; they surface through Available=False
+// and Progressing=True instead.
+const unreadyGracePeriod = 5 * time.Minute
+
+// unreadySince returns when the pod last transitioned out of Ready, falling
+// back to the creation timestamp for pods that never published a Ready
+// condition (e.g. stuck in image pull).
+func unreadySince(p *corev1.Pod) time.Time {
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.LastTransitionTime.Time
+		}
+	}
+	return p.CreationTimestamp.Time
 }
 
 // SetupWithManager registers the controller: reconciles the singleton on

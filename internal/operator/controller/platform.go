@@ -129,8 +129,7 @@ func sourcePreservationDisabled(message string) podEgressPlatform {
 func hasAcceptedDefaultPodAdvertisement(items []unstructured.Unstructured) bool {
 	for i := range items {
 		item := &items[i]
-		status, _, _ := unstructured.NestedString(item.Object, "status", "status")
-		if status != "Accepted" {
+		if !routeAdvertisementAccepted(item) {
 			continue
 		}
 		advertisements, _, _ := unstructured.NestedStringSlice(item.Object, "spec", "advertisements")
@@ -143,6 +142,24 @@ func hasAcceptedDefaultPodAdvertisement(items []unstructured.Unstructured) bool 
 			if ok && fields["networkSelectionType"] == "DefaultNetwork" {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// routeAdvertisementAccepted reports whether a RouteAdvertisements object is
+// accepted. OVN-Kubernetes currently publishes a bare status.status string
+// ("Accepted"); a conditions-based form (type=Accepted, status=True) is also
+// recognized so a CRD status evolution does not silently disable detection.
+func routeAdvertisementAccepted(item *unstructured.Unstructured) bool {
+	if status, _, _ := unstructured.NestedString(item.Object, "status", "status"); status == "Accepted" {
+		return true
+	}
+	conditions, _, _ := unstructured.NestedSlice(item.Object, "status", "conditions")
+	for _, condition := range conditions {
+		fields, ok := condition.(map[string]interface{})
+		if ok && fields["type"] == "Accepted" && fields["status"] == "True" {
+			return true
 		}
 	}
 	return false

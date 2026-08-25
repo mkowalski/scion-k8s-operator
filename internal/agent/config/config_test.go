@@ -55,7 +55,9 @@ func TestFromEnvTable(t *testing.T) {
 				if c.RefreshInterval != time.Hour {
 					t.Errorf("RefreshInterval = %v, want 1h", c.RefreshInterval)
 				}
-				if !c.AdvertisePodCIDR || !c.AdvertiseNodeIP || !c.EnableDaemonAPI {
+				// nodeIP advertisement defaults off (fail-safe: an
+				// underlay-sharing node IP creates a routing loop).
+				if !c.AdvertisePodCIDR || c.AdvertiseNodeIP || !c.EnableDaemonAPI {
 					t.Errorf("bool defaults: %+v", c)
 				}
 			},

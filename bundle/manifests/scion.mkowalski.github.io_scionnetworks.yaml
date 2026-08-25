@@ -56,8 +56,13 @@ spec:
                       clusterNetwork/serviceNetwork IPv4 ranges automatically. IPv6 ranges
                       are ignored because the policy engine is IPv4-only.
                     items:
+                      maxLength: 18
                       pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
                       type: string
+                      x-kubernetes-validations:
+                      - message: must be a valid IPv4 CIDR
+                        rule: isCIDR(self)
+                    maxItems: 64
                     type: array
                   isdASes:
                     description: ISDASes lists remote ISD-ASes to exchange prefixes
@@ -72,8 +77,13 @@ spec:
                       UnderlayCIDRs are never accepted from remotes and keep cluster-to-AS
                       transport reachable outside the SCION tunnel.
                     items:
+                      maxLength: 18
                       pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$
                       type: string
+                      x-kubernetes-validations:
+                      - message: must be a valid IPv4 CIDR
+                        rule: isCIDR(self)
+                    maxItems: 64
                     type: array
                 required:
                 - isdASes

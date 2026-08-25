@@ -24,6 +24,8 @@ type Config struct {
 	AcceptISDASes    string // comma-separated remote ISD-ASes allowed by SGRP accept policy
 	ForbiddenCIDRs   string // comma-separated cluster/service/machine CIDRs (guardrails)
 	MetricsAddr      string // default :9465
+	MetricsTLSCert   string // PEM cert; with MetricsTLSKey, serve HTTPS and require scraper auth
+	MetricsTLSKey    string
 }
 
 func FromEnv() (Config, error) {
@@ -36,11 +38,18 @@ func FromEnv() (Config, error) {
 		StateDir:         getenv("SCION_STATE_DIR", "/var/lib/scion-node-agent"),
 		TunName:          getenv("SCION_TUN_NAME", "scion0"),
 		AdvertisePodCIDR: getenvBool("SCION_ADVERTISE_POD_CIDR", true),
-		AdvertiseNodeIP:  getenvBool("SCION_ADVERTISE_NODE_IP", true),
-		EnableDaemonAPI:  getenvBool("SCION_ENABLE_DAEMON_API", true),
-		AcceptISDASes:    os.Getenv("SCION_ACCEPT_ISD_ASES"),
-		ForbiddenCIDRs:   os.Getenv("SCION_FORBIDDEN_CIDRS"),
-		MetricsAddr:      getenv("SCION_METRICS_ADDR", ":9465"),
+		// Fail-safe default, mirroring the CRD: advertising a node IP
+		// that shares the SCION underlay creates a routing loop.
+		AdvertiseNodeIP: getenvBool("SCION_ADVERTISE_NODE_IP", false),
+		EnableDaemonAPI: getenvBool("SCION_ENABLE_DAEMON_API", true),
+		AcceptISDASes:   os.Getenv("SCION_ACCEPT_ISD_ASES"),
+		ForbiddenCIDRs:  os.Getenv("SCION_FORBIDDEN_CIDRS"),
+		MetricsAddr:     getenv("SCION_METRICS_ADDR", ":9465"),
+		MetricsTLSCert:  os.Getenv("SCION_METRICS_TLS_CERT"),
+		MetricsTLSKey:   os.Getenv("SCION_METRICS_TLS_KEY"),
+	}
+	if (c.MetricsTLSCert == "") != (c.MetricsTLSKey == "") {
+		return c, fmt.Errorf("SCION_METRICS_TLS_CERT and SCION_METRICS_TLS_KEY must be set together")
 	}
 	var err error
 	if c.RefreshInterval, err = time.ParseDuration(getenv("SCION_REFRESH_INTERVAL", "1h")); err != nil {

@@ -129,27 +129,26 @@ func TestBackendForHTTPSecretWithoutTokenKey(t *testing.T) {
 
 func TestDegradedReason(t *testing.T) {
 	tests := []struct {
-		name       string
-		ready      int32
-		total      int32
-		platform   podEgressPlatform
-		regFailed  bool
-		backend    string
-		wantOn     bool
-		wantReason string
+		name           string
+		degradedAgents int
+		platform       podEgressPlatform
+		regFailed      bool
+		backend        string
+		wantOn         bool
+		wantReason     string
 	}{
-		{"all healthy", 2, 2, podEgressPlatform{Status: metav1.ConditionTrue}, false, "http", false, "AsExpected"},
-		{"unready agents only", 1, 2, podEgressPlatform{Status: metav1.ConditionTrue}, false, "manual", true, "UnreadyAgents"},
-		{"host routing disabled", 2, 2, podEgressPlatform{Status: metav1.ConditionFalse, Reason: "HostRoutingDisabled"}, false, "manual", true, "HostRoutingDisabled"},
-		{"unknown platform does not degrade", 2, 2, podEgressPlatform{Status: metav1.ConditionUnknown}, false, "manual", false, "AsExpected"},
-		{"registrar failed, agents ready", 2, 2, podEgressPlatform{Status: metav1.ConditionTrue}, true, "http", true, "RegistrarSyncFailed"},
-		{"registrar failed but unready agents take precedence", 1, 2, podEgressPlatform{Status: metav1.ConditionFalse, Reason: "HostRoutingDisabled"}, true, "http", true, "UnreadyAgents"},
-		{"registrar failed with manual backend does not degrade", 2, 2, podEgressPlatform{Status: metav1.ConditionTrue}, true, "manual", false, "AsExpected"},
+		{"all healthy", 0, podEgressPlatform{Status: metav1.ConditionTrue}, false, "http", false, "AsExpected"},
+		{"aged unready agents degrade", 1, podEgressPlatform{Status: metav1.ConditionTrue}, false, "manual", true, "UnreadyAgents"},
+		{"host routing disabled", 0, podEgressPlatform{Status: metav1.ConditionFalse, Reason: "HostRoutingDisabled"}, false, "manual", true, "HostRoutingDisabled"},
+		{"unknown platform does not degrade", 0, podEgressPlatform{Status: metav1.ConditionUnknown}, false, "manual", false, "AsExpected"},
+		{"registrar failed, agents ready", 0, podEgressPlatform{Status: metav1.ConditionTrue}, true, "http", true, "RegistrarSyncFailed"},
+		{"registrar failed but unready agents take precedence", 1, podEgressPlatform{Status: metav1.ConditionFalse, Reason: "HostRoutingDisabled"}, true, "http", true, "UnreadyAgents"},
+		{"registrar failed with manual backend does not degrade", 0, podEgressPlatform{Status: metav1.ConditionTrue}, true, "manual", false, "AsExpected"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.platform.Message = "platform message"
-			on, why, msg := degradedReason(tc.ready, tc.total, "unready message", tc.platform, tc.regFailed, "registrar error", tc.backend)
+			on, why, msg := degradedReason(tc.degradedAgents, "unready message", tc.platform, tc.regFailed, "registrar error", tc.backend)
 			if on != tc.wantOn || why != tc.wantReason {
 				t.Errorf("degradedReason = (%v, %q), want (%v, %q)", on, why, tc.wantOn, tc.wantReason)
 			}

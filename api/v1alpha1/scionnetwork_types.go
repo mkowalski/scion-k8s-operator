@@ -57,12 +57,18 @@ type AcceptPolicySpec struct {
 	// clusterNetwork/serviceNetwork IPv4 ranges automatically. IPv6 ranges
 	// are ignored because the policy engine is IPv4-only.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=18
 	// +kubebuilder:validation:items:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$`
+	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self)",message="must be a valid IPv4 CIDR"
 	ForbiddenCIDRs []string `json:"forbiddenCIDRs,omitempty"`
 	// UnderlayCIDRs are never accepted from remotes and keep cluster-to-AS
 	// transport reachable outside the SCION tunnel.
 	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=18
 	// +kubebuilder:validation:items:Pattern=`^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$`
+	// +kubebuilder:validation:items:XValidation:rule="isCIDR(self)",message="must be a valid IPv4 CIDR"
 	UnderlayCIDRs []string `json:"underlayCIDRs,omitempty"`
 }
 
