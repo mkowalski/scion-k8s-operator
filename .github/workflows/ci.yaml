@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: |
+          out=$(gofmt -l . | grep -v '^bin/' || true)
+          if [ -n "$out" ]; then
+            echo "gofmt needs to be run on:" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+      - name: go vet
+        run: make lint
+      - name: Build binaries
+        run: make build
+      - name: Unit tests
+        run: make test
+      - name: Envtest suite
+        run: |
+          make envtest
+          KUBEBUILDER_ASSETS=$(bin/setup-envtest use -p path) \
+            go test ./internal/operator/controller/ -count=1 -v
+      - name: Integration - discovery protocol
+        run: ./test/integration/discovery_test.sh
+
+  bundle-check:
+    name: OLM bundle up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: bundle-check
+        run: make bundle-check
+
+  images:
+    name: Image builds
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [agent, operator, registrar]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.image }} image
+        run: docker build -f build/Dockerfile.${{ matrix.image }} -t scion-${{ matrix.image }}:ci .
