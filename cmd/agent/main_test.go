@@ -74,10 +74,16 @@ func TestAdvertisedNets(t *testing.T) {
 	}
 }
 
-func TestAdvertisedNetsIPv6(t *testing.T) {
-	info := kube.NodeInfo{InternalIP: "2001:db8::1"}
-	got := advertisedNets(info, config.Config{AdvertiseNodeIP: true})
-	want := []string{"2001:db8::1/128"}
+func TestAdvertisedNetsIPv4Only(t *testing.T) {
+	// The dataplane is IPv4-only: dual-stack pod CIDRs and IPv6 node IPs
+	// must not be advertised into SGRP (a remote SIG would install an
+	// IPv6 route toward a gateway that cannot serve it).
+	info := kube.NodeInfo{
+		PodCIDRs:   []string{"10.130.0.0/23", "fd01:0:0:3::/64"},
+		InternalIP: "2001:db8::1",
+	}
+	got := advertisedNets(info, config.Config{AdvertisePodCIDR: true, AdvertiseNodeIP: true})
+	want := []string{"10.130.0.0/23"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("advertisedNets = %v, want %v", got, want)
 	}

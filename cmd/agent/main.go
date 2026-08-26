@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -289,14 +290,21 @@ func localIA(confDir string) (string, error) {
 func advertisedNets(info kube.NodeInfo, cfg config.Config) []string {
 	var nets []string
 	if cfg.AdvertisePodCIDR {
-		nets = append(nets, info.PodCIDRs...)
+		for _, cidr := range info.PodCIDRs {
+			// The dataplane and policy engine are IPv4-only; advertising
+			// a dual-stack node's IPv6 pod CIDR makes the remote SIG
+			// install an IPv6 route toward a gateway that cannot serve
+			// it (blackhole). Mirror the operator's IPv4-only filtering.
+			if prefix, err := netip.ParsePrefix(cidr); err == nil && prefix.Addr().Is4() {
+				nets = append(nets, cidr)
+			}
+		}
 	}
 	if cfg.AdvertiseNodeIP {
-		bits := "/32"
-		if ip := net.ParseIP(info.InternalIP); ip != nil && ip.To4() == nil {
-			bits = "/128"
+		// Same IPv4-only rationale as above for IPv6 node IPs.
+		if ip := net.ParseIP(info.InternalIP); ip != nil && ip.To4() != nil {
+			nets = append(nets, info.InternalIP+"/32")
 		}
-		nets = append(nets, info.InternalIP+bits)
 	}
 	return nets
 }
