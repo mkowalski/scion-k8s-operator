@@ -32,7 +32,9 @@ package daemonapi
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -57,6 +59,7 @@ import (
 	"github.com/scionproto/scion/private/revcache"
 	segfetchergrpc "github.com/scionproto/scion/private/segment/segfetcher/grpc"
 	"github.com/scionproto/scion/private/storage"
+	scdb "github.com/scionproto/scion/private/storage/db"
 	pathstoragemetrics "github.com/scionproto/scion/private/storage/path/metrics"
 	truststoragemetrics "github.com/scionproto/scion/private/storage/trust/metrics"
 	"github.com/scionproto/scion/private/topology"
@@ -76,6 +79,15 @@ const queryInterval = 5 * time.Minute
 // Run registers metrics on the global (default) prometheus registry and
 // therefore must be invoked at most once per process.
 func Run(ctx context.Context, configDir, stateDir, listenAddr string) (err error) {
+	// The sqlite databases under stateDir are caches derived from the
+	// bootstrap source. A re-bootstrapped AS (fresh trust material with
+	// reused TRC IDs) makes the cached trust DB conflict with the fetched
+	// TRC files; without this preflight the daemon fails on the UNIQUE
+	// (isd_id, base, serial) constraint forever and the agent crash-loops
+	// until someone deletes the hostPath state by hand.
+	if err := resetStaleTrustCache(ctx, filepath.Join(configDir, "certs"), stateDir); err != nil {
+		return err
+	}
 	topo, err := topology.NewLoader(topology.LoaderCfg{
 		File: filepath.Join(configDir, "topology.json"),
 		// Reload omitted: no SIGHUP-driven topology reload in the agent.
@@ -312,4 +324,43 @@ func loaderMetrics() topology.LoaderMetrics {
 		),
 		Updates: metrics.NewPromCounter(updates).With(prom.LabelResult, prom.Success),
 	}
+}
+
+// resetStaleTrustCache loads the bootstrapped TRC files into the cached
+// trust DB. A write failure means a TRC in certsDir shares its
+// (isd, base, serial) identity with a cached TRC but has different content —
+// the AS re-bootstrapped its trust material and every cached database is
+// stale. The caches (trust and path) are deleted so the daemon rebuilds
+// them from the current bootstrap source; anything else permanently wedges
+// the agent. Trust anchoring is unchanged: the root of trust is the
+// bootstrap source (or pinned TRCs), never the cache.
+func resetStaleTrustCache(ctx context.Context, certsDir, stateDir string) error {
+	trustDB, err := storage.NewTrustStorage(storage.DBConfig{
+		Connection: filepath.Join(stateDir, "sd.trust.db"),
+	})
+	if err != nil {
+		return serrors.Wrap("opening trust cache for preflight", err)
+	}
+	_, loadErr := trust.LoadTRCs(ctx, certsDir, trustDB)
+	if closeErr := trustDB.Close(); closeErr != nil && loadErr == nil {
+		return serrors.Wrap("closing trust cache after preflight", closeErr)
+	}
+	if loadErr == nil {
+		return nil
+	}
+	if !errors.Is(loadErr, scdb.ErrWriteFailed) {
+		return serrors.Wrap("preflight TRC load", loadErr)
+	}
+	slog.Warn("cached SCION databases conflict with bootstrapped TRCs "+
+		"(AS trust was re-bootstrapped); resetting daemon caches",
+		"err", loadErr.Error())
+	for _, base := range []string{"sd.trust.db", "sd.path.db"} {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			p := filepath.Join(stateDir, base+suffix)
+			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return serrors.Wrap("removing stale daemon cache", err, "file", p)
+			}
+		}
+	}
+	return nil
 }
