@@ -300,27 +300,39 @@ func nodeInfo(ctx context.Context, cfg config.Config) (kube.NodeInfo, bool, erro
 	if err != nil {
 		return info, false, err
 	}
-	// Calico IPAM: pod prefixes live in BlockAffinity objects. They take
-	// priority over node.spec.podCIDR(s): on clusters with the node CIDR
-	// allocator enabled the Node carries a pod CIDR that Calico ignores,
-	// so advertising it would misroute return traffic. Absence of the
-	// BlockAffinity API means this is not a Calico cluster; fall through
-	// to the Node sources.
+	// Calico and Cilium IPAM: pod prefixes live in CNI-owned objects
+	// (BlockAffinity / CiliumNode). They take priority over
+	// node.spec.podCIDR(s): on clusters with the node CIDR allocator
+	// enabled the Node carries a pod CIDR these CNIs ignore, so
+	// advertising it would misroute return traffic. Both allocate
+	// dynamically, so their presence flips the caller into refresh mode.
+	// Absence of the APIs means neither CNI is installed; fall through to
+	// the Node sources.
 	dc, err := dynamic.NewForConfig(rc)
 	if err != nil {
 		return info, false, err
 	}
-	calicoCIDRs, err := kube.CalicoPodCIDRs(ctx, dc, cfg.NodeName)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return info, false, nil
+	calicoCIDRs, calicoErr := kube.CalicoPodCIDRs(ctx, dc, cfg.NodeName)
+	switch {
+	case calicoErr == nil:
+		if len(calicoCIDRs) > 0 {
+			info.PodCIDRs = calicoCIDRs
 		}
-		return info, false, err
+		return info, true, nil
+	case !apierrors.IsNotFound(calicoErr):
+		return info, false, calicoErr
 	}
-	if len(calicoCIDRs) > 0 {
-		info.PodCIDRs = calicoCIDRs
+	ciliumCIDRs, ciliumErr := kube.CiliumPodCIDRs(ctx, dc, cfg.NodeName)
+	switch {
+	case ciliumErr == nil:
+		if len(ciliumCIDRs) > 0 {
+			info.PodCIDRs = ciliumCIDRs
+		}
+		return info, true, nil
+	case !apierrors.IsNotFound(ciliumErr):
+		return info, false, ciliumErr
 	}
-	return info, true, nil
+	return info, false, nil
 }
 
 func policyInput(confDir string, info kube.NodeInfo, cfg config.Config) (policy.Input, error) {

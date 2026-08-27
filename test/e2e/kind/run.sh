@@ -11,13 +11,14 @@
 #
 # Environment:
 #   CONTAINER_ENGINE  docker (default) | podman
-#   CNI               kindnet (default) | calico
+#   CNI               kindnet (default) | calico | cilium
 #   KEEP=1            keep the cluster and AS container on exit
 set -euo pipefail
 
 ENGINE=${CONTAINER_ENGINE:-docker}
 CNI=${CNI:-kindnet}
 CALICO_VERSION=v3.30.3
+CILIUM_VERSION=1.18.2
 CLUSTER=scion-e2e
 AS_NAME=scion-e2e-as
 REMOTE_PREFIX=192.168.100.0/24
@@ -25,6 +26,7 @@ REMOTE_PING_IP=192.168.100.1
 REMOTE_TCP_PORT=18080
 REMOTE_ISD_AS=1-ff00:0:111
 CLUSTER_PREFIXES=10.244.0.0/16
+[ "${CNI:-kindnet}" = "cilium" ] && CLUSTER_PREFIXES=10.245.0.0/16
 NAMESPACE=scion-system
 TEST_IMAGE=docker.io/library/python:3.12-alpine
 
@@ -61,11 +63,11 @@ log "building images (operator, agent, scion-as)"
 log "creating kind cluster (CNI: $CNI)"
 kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
 kind_config="$here/kind-config.yaml"
-[ "$CNI" = "calico" ] && kind_config="$here/kind-config-calico.yaml"
-# With disableDefaultCNI nodes stay NotReady until Calico is installed, so
+[ "$CNI" != "kindnet" ] && kind_config="$here/kind-config-nocni.yaml"
+# With disableDefaultCNI nodes stay NotReady until the CNI is installed, so
 # --wait only applies to the kindnet config.
 kind_wait="--wait 3m"
-[ "$CNI" = "calico" ] && kind_wait=""
+[ "$CNI" != "kindnet" ] && kind_wait=""
 # shellcheck disable=SC2086  # intentional word splitting of the wait flag
 kind create cluster --config "$kind_config" $kind_wait
 
@@ -76,6 +78,27 @@ if [ "$CNI" = "calico" ]; then
               -e 's|#   value: "192.168.0.0/16"|  value: "10.244.0.0/16"|' \
         | kubectl apply -f - >/dev/null
     kubectl -n kube-system rollout status ds/calico-node --timeout=5m
+    kubectl wait --for=condition=Ready node --all --timeout=3m
+fi
+
+if [ "$CNI" = "cilium" ]; then
+    log "installing Cilium $CILIUM_VERSION"
+    # cluster-pool IPAM with a pool deliberately disjoint from the node
+    # allocator's podSubnet: pods get 10.245.x.x while node.spec.podCIDR
+    # says 10.244.x.x, so the e2e only passes if the agent advertises the
+    # CiliumNode prefixes. The masquerade exemption for the remote SCION
+    # prefix is Cilium-native: BPF ip-masq-agent with nonMasqueradeCIDRs.
+    helm repo add cilium https://helm.cilium.io >/dev/null
+    helm install cilium cilium/cilium --version "$CILIUM_VERSION" -n kube-system \
+        --set operator.replicas=1 \
+        --set ipam.mode=cluster-pool \
+        --set 'ipam.operator.clusterPoolIPv4PodCIDRList[0]=10.245.0.0/16' \
+        --set bpf.masquerade=true \
+        --set nodePort.enabled=true \
+        --set ipMasqAgent.enabled=true \
+        --set "ipMasqAgent.config.nonMasqueradeCIDRs[0]=$REMOTE_PREFIX" \
+        >/dev/null
+    kubectl -n kube-system rollout status ds/cilium --timeout=5m
     kubectl wait --for=condition=Ready node --all --timeout=3m
 fi
 # image-archive works identically for docker and podman image stores; one
@@ -120,13 +143,16 @@ curl -fsS -H "Authorization: Bearer $REGISTRAR_TOKEN" "http://$AS_IP:8642/v1/sig
 # scion0 must keep its pod source (and MASQUERADE onto an addressless tun
 # would break entirely). Exempt the remote SCION prefix per CNI:
 # - kindnet: RETURN rule in its KIND-MASQ-AGENT iptables chain per node.
+# - cilium: handled at install time (BPF ip-masq-agent nonMasqueradeCIDRs).
 # - calico: a disabled IPPool covering the prefix — felix's natOutgoing
 #   only masquerades destinations outside every IPPool, so member
 #   destinations are exempt while the disabled pool assigns no pod IPs.
 #   disableBGPExport is essential: without it BIRD advertises the pool
 #   CIDR into the node mesh and the resulting proto-bird route outranks
 #   the SCION route on every other node.
-if [ "$CNI" = "calico" ]; then
+if [ "$CNI" = "cilium" ]; then
+    : # nonMasqueradeCIDRs configured via helm values above
+elif [ "$CNI" = "calico" ]; then
     kubectl apply -f - <<EOF
 apiVersion: crd.projectcalico.org/v1
 kind: IPPool
@@ -204,6 +230,11 @@ esac
 case "$forbidden" in
     *10.96.*) : ;; *) die "service network missing from derived forbidden CIDRs (ServiceCIDR API): $forbidden" ;;
 esac
+if [ "$CNI" = "cilium" ]; then
+    case "$forbidden" in
+        *10.245.*) : ;; *) die "cilium pool missing from derived forbidden CIDRs (CiliumNode source): $forbidden" ;;
+    esac
+fi
 
 # --- workload + connectivity ---------------------------------------------------------
 log "deploying sample workload"

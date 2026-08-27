@@ -879,3 +879,42 @@ func TestClusterForbiddenCIDRsDeterministic(t *testing.T) {
 		t.Fatalf("not sorted: %v", got1)
 	}
 }
+
+// TestClusterForbiddenCIDRsCiliumNodes: on Cilium cluster-pool IPAM the pod
+// network comes from CiliumNode objects, not node.spec.podCIDRs.
+func TestClusterForbiddenCIDRsCiliumNodes(t *testing.T) {
+	cn := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "cilium.io/v2",
+		"kind":       "CiliumNode",
+		"metadata":   map[string]any{"name": "n1"},
+		"spec": map[string]any{"ipam": map[string]any{
+			"podCIDRs": []any{"10.10.0.0/24", "fd00:10:10::/64"},
+		}},
+	}}
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "cilium.io", Version: "v2", Kind: "CiliumNode",
+	}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "cilium.io", Version: "v2", Kind: "CiliumNodeList",
+	}, &unstructured.UnstructuredList{})
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cn).Build()
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+
+	got, _, err := r.clusterForbiddenCIDRs(context.Background(), newScionNetwork())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "10.10.0.0/24") {
+		t.Fatalf("forbidden CIDRs = %v, missing cilium pod CIDR", got)
+	}
+	if slices.Contains(got, "fd00:10:10::/64") {
+		t.Fatalf("forbidden CIDRs = %v, IPv6 must be filtered", got)
+	}
+}

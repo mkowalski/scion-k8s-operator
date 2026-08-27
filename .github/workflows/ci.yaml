@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        cni: [kindnet, calico]
+        cni: [kindnet, calico, cilium]
     steps:
       - uses: actions/checkout@v5
       - name: Install kind

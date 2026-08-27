@@ -435,6 +435,11 @@ func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *
 		return nil, false, err
 	}
 	out = append(out, calicoCIDRs...)
+	ciliumCIDRs, err := r.ciliumNodeCIDRs(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	out = append(out, ciliumCIDRs...)
 	out = dedupe(out)
 	// Deterministic order: this list becomes a DaemonSet env value, and
 	// any ordering flip between reconciles rolls every agent pod (killing
@@ -517,6 +522,34 @@ func (r *ScionNetworkReconciler) calicoPoolCIDRs(ctx context.Context) ([]string,
 		}
 		if cidr, _, _ := unstructured.NestedString(list.Items[i].Object, "spec", "cidr"); isIPv4CIDR(cidr) {
 			out = append(out, cidr)
+		}
+	}
+	return out, nil
+}
+
+// ciliumNodeCIDRs returns the IPv4 pod CIDRs allocated by Cilium IPAM
+// (cilium.io/v2 CiliumNode spec.ipam.podCIDRs). Cilium cluster-pool IPAM
+// does not populate node.spec.podCIDRs, so without this source the pod
+// network would be missing from the deny list on Cilium clusters. Absence
+// of the API or missing RBAC is tolerated.
+func (r *ScionNetworkReconciler) ciliumNodeCIDRs(ctx context.Context) ([]string, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "cilium.io", Version: "v2", Kind: "CiliumNodeList",
+	})
+	if err := r.List(ctx, list); err != nil {
+		if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) || meta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list cilium nodes: %w", err)
+	}
+	var out []string
+	for i := range list.Items {
+		cidrs, _, _ := unstructured.NestedStringSlice(list.Items[i].Object, "spec", "ipam", "podCIDRs")
+		for _, cidr := range cidrs {
+			if isIPv4CIDR(cidr) {
+				out = append(out, cidr)
+			}
 		}
 	}
 	return out, nil

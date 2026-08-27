@@ -211,6 +211,11 @@ func ClusterRole() *rbacv1.ClusterRole {
 			Resources: []string{"blockaffinities"},
 			Verbs:     []string{"get", "list"},
 		}, {
+			// Cilium IPAM pod-CIDR discovery (absent on other CNIs).
+			APIGroups: []string{"cilium.io"},
+			Resources: []string{"ciliumnodes"},
+			Verbs:     []string{"get", "list"},
+		}, {
 			APIGroups: []string{"authentication.k8s.io"},
 			Resources: []string{"tokenreviews"},
 			Verbs:     []string{"create"},

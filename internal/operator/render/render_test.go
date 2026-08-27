@@ -202,9 +202,9 @@ func TestClusterRole(t *testing.T) {
 	if cr.Name != "scion-node-agent" {
 		t.Fatalf("name: %q", cr.Name)
 	}
-	// Node read, Calico block-affinity read (pod-CIDR discovery), and
+	// Node read, Calico/Cilium IPAM reads (pod-CIDR discovery), and
 	// TokenReview/SubjectAccessReview for metrics scraper auth.
-	if len(cr.Rules) != 4 {
+	if len(cr.Rules) != 5 {
 		t.Fatalf("rules: %+v", cr.Rules)
 	}
 	r := cr.Rules[0]
