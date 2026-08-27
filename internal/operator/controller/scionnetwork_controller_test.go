@@ -17,7 +17,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -801,5 +803,79 @@ func TestClusterForbiddenCIDRsVanillaDerivation(t *testing.T) {
 		if slices.Contains(got, bad) {
 			t.Errorf("forbidden CIDRs = %v, IPv6 %s must be filtered", got, bad)
 		}
+	}
+}
+
+// TestClusterForbiddenCIDRsCalicoPools: on Calico clusters the pod network
+// comes from IPPool objects, not node.spec.podCIDRs.
+func TestClusterForbiddenCIDRsCalicoPools(t *testing.T) {
+	pool := func(name, cidr string, disabled bool) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "crd.projectcalico.org/v1",
+			"kind":       "IPPool",
+			"metadata":   map[string]any{"name": name},
+			"spec":       map[string]any{"cidr": cidr, "disabled": disabled},
+		}}
+	}
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "crd.projectcalico.org", Version: "v1", Kind: "IPPool",
+	}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "crd.projectcalico.org", Version: "v1", Kind: "IPPoolList",
+	}, &unstructured.UnstructuredList{})
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(
+			pool("default-ipv4", "10.244.0.0/16", false),
+			pool("v6", "fd00:10:244::/48", false),
+			// natOutgoing-exemption marker for external space: must NOT
+			// be denied.
+			pool("scion-remote-no-nat", "192.168.100.0/24", true),
+		).Build()
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+
+	got, _, err := r.clusterForbiddenCIDRs(context.Background(), newScionNetwork())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(got, "10.244.0.0/16") {
+		t.Fatalf("forbidden CIDRs = %v, missing calico pool 10.244.0.0/16", got)
+	}
+	if slices.Contains(got, "fd00:10:244::/48") {
+		t.Fatalf("forbidden CIDRs = %v, IPv6 pool must be filtered", got)
+	}
+	if slices.Contains(got, "192.168.100.0/24") {
+		t.Fatalf("forbidden CIDRs = %v, disabled (NAT-exemption) pool must be skipped", got)
+	}
+}
+
+// TestClusterForbiddenCIDRsDeterministic: the merged list feeds a DaemonSet
+// env value; ordering flips between reconciles roll every agent pod.
+func TestClusterForbiddenCIDRsDeterministic(t *testing.T) {
+	sn := newScionNetwork()
+	sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"192.168.111.0/24"}
+	nodeA := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "a"},
+		Spec: corev1.NodeSpec{PodCIDRs: []string{"10.244.1.0/24"}}}
+	nodeB := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "b"},
+		Spec: corev1.NodeSpec{PodCIDRs: []string{"10.244.0.0/24"}}}
+
+	c1, s1 := newFakeClient(t, nodeA, nodeB)
+	c2, s2 := newFakeClient(t, nodeB, nodeA) // reversed seeding order
+	got1, _, err1 := (&ScionNetworkReconciler{Client: c1, Scheme: s1}).clusterForbiddenCIDRs(context.Background(), sn)
+	got2, _, err2 := (&ScionNetworkReconciler{Client: c2, Scheme: s2}).clusterForbiddenCIDRs(context.Background(), sn)
+	if err1 != nil || err2 != nil {
+		t.Fatal(err1, err2)
+	}
+	if !slices.Equal(got1, got2) {
+		t.Fatalf("order not deterministic: %v vs %v", got1, got2)
+	}
+	if !slices.IsSorted(got1) {
+		t.Fatalf("not sorted: %v", got1)
 	}
 }

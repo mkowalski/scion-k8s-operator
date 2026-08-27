@@ -430,7 +430,17 @@ func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *
 		return nil, false, err
 	}
 	out = append(out, svcCIDRs...)
-	return dedupe(out), openshift, nil
+	calicoCIDRs, err := r.calicoPoolCIDRs(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	out = append(out, calicoCIDRs...)
+	out = dedupe(out)
+	// Deterministic order: this list becomes a DaemonSet env value, and
+	// any ordering flip between reconciles rolls every agent pod (killing
+	// live SGRP sessions). List responses do not guarantee item order.
+	slices.Sort(out)
+	return out, openshift, nil
 }
 
 // nodePodCIDRs returns the IPv4 pod CIDRs allocated to nodes via the
@@ -475,6 +485,38 @@ func (r *ScionNetworkReconciler) serviceCIDRs(ctx context.Context) ([]string, er
 			if isIPv4CIDR(cidr) {
 				out = append(out, cidr)
 			}
+		}
+	}
+	return out, nil
+}
+
+// calicoPoolCIDRs returns the IPv4 pod-network CIDRs from enabled Calico
+// IPPools (crd.projectcalico.org/v1). Calico IPAM does not populate
+// node.spec.podCIDRs, so without this source the pod network would be
+// missing from the deny list on Calico clusters. Disabled pools are
+// skipped: they assign no pod IPs, and the documented natOutgoing
+// exemption pattern uses a disabled pool to mark *external* destinations
+// (e.g. the remote SCION prefix) — denying those would break the exact
+// traffic this operator exists to carry. Absence of the API or missing
+// RBAC is tolerated.
+func (r *ScionNetworkReconciler) calicoPoolCIDRs(ctx context.Context) ([]string, error) {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group: "crd.projectcalico.org", Version: "v1", Kind: "IPPoolList",
+	})
+	if err := r.List(ctx, list); err != nil {
+		if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) || meta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list calico IP pools: %w", err)
+	}
+	var out []string
+	for i := range list.Items {
+		if disabled, _, _ := unstructured.NestedBool(list.Items[i].Object, "spec", "disabled"); disabled {
+			continue
+		}
+		if cidr, _, _ := unstructured.NestedString(list.Items[i].Object, "spec", "cidr"); isIPv4CIDR(cidr) {
+			out = append(out, cidr)
 		}
 	}
 	return out, nil
