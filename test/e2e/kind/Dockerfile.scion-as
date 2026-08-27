@@ -1,0 +1,36 @@
+# SCION AS-in-a-box for the kind e2e: two core ASes (A = the cluster's AS,
+# B = a remote SCION site with a SIG), discovery, registrar, and a remote
+# HTTP echo — all in one container on the kind docker network.
+#
+# Build context is the repository root: the registrar is built from the
+# checked-out source so CI tests the current commit, not a released ref.
+FROM docker.io/library/golang:1.26 AS scion-build
+ARG SCION_VERSION=v0.15.1
+RUN git clone --depth 1 -b ${SCION_VERSION} https://github.com/scionproto/scion /scion
+WORKDIR /scion
+# control and daemon need cgo (go-sqlite3); link statically so the binaries
+# run on the ubi9 glibc.
+RUN CGO_ENABLED=1 go build -tags netgo,osusergo -ldflags '-extldflags "-static"' \
+        -o /out/scion-control ./control/cmd/control && \
+    CGO_ENABLED=1 go build -tags netgo,osusergo -ldflags '-extldflags "-static"' \
+        -o /out/scion-daemon ./daemon/cmd/daemon && \
+    CGO_ENABLED=0 go build -o /out/scion-router ./router/cmd/router && \
+    CGO_ENABLED=0 go build -o /out/scion-dispatcher ./dispatcher/cmd/dispatcher && \
+    CGO_ENABLED=0 go build -o /out/scion-ip-gateway ./gateway/cmd/gateway && \
+    CGO_ENABLED=0 go build -o /out/scion-pki ./scion-pki/cmd/scion-pki
+
+FROM docker.io/library/golang:1.26 AS registrar-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/registrar cmd/registrar
+COPY internal/registrar internal/registrar
+RUN CGO_ENABLED=0 go build -o /out/scion-registrar ./cmd/registrar
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal
+RUN microdnf install -y python3 iproute procps-ng nftables && microdnf clean all
+COPY --from=scion-build /out/ /usr/local/bin/
+COPY --from=registrar-build /out/scion-registrar /usr/local/bin/scion-registrar
+COPY hack/dev-scion-topology/serve-discovery.py /usr/local/bin/serve-discovery.py
+COPY test/e2e/kind/scion-as-entrypoint.sh /usr/local/bin/scion-as-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/scion-as-entrypoint.sh"]

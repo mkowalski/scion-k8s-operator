@@ -62,3 +62,16 @@ jobs:
       - uses: actions/checkout@v5
       - name: Build ${{ matrix.image }} image
         run: docker build -f build/Dockerfile.${{ matrix.image }} -t scion-${{ matrix.image }}:ci .
+
+  kind-e2e:
+    name: kind e2e (vanilla Kubernetes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install kind
+        run: |
+          curl -fsSLo /usr/local/bin/kind \
+            https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
+          chmod +x /usr/local/bin/kind
+      - name: Run kind e2e
+        run: ./test/e2e/kind/run.sh

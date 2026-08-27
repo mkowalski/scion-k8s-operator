@@ -48,6 +48,30 @@ every five minutes; an unmet prerequisite reports `Available=False` and
 `SourcePreservationDisabled`. Local-gateway mode trades shared-gateway
 hardware offload for host route integration.
 
+### Vanilla Kubernetes
+
+The operator runs on plain Kubernetes (validated continuously by the kind
+e2e in CI, default kindnetd CNI — see `test/e2e/kind/`). Differences from
+OpenShift:
+
+- The CNI must route pod egress for non-cluster destinations through the
+  host routing table (native-routing CNIs and kindnet do), and the prefixes
+  accepted from remote ASes must be **excluded from the CNI's masquerade**
+  (ip-masq-agent `nonMasqueradeCIDRs`, Calico `natOutgoing`, Cilium
+  masquerade config, kind `KIND-MASQ-AGENT`). Masquerading into the
+  addressless `scion0` tun breaks traffic entirely, not just source
+  preservation.
+- The CNI must use node-CIDR-allocator IPAM (`node.spec.podCIDR(s)`); the
+  agent refuses to start when pod-CIDR advertisement is enabled but no
+  IPv4 pod CIDR is discoverable (Calico and Cilium cluster-pool IPAM are
+  not supported yet).
+- Cluster networks for the deny list come from node `spec.podCIDRs` and the
+  ServiceCIDR API instead of the OpenShift network config.
+- Skip `monitoring.yaml` unless prometheus-operator CRDs are installed
+  (`test/e2e/kind/manifests/` is a ready-made subset), metrics stay
+  plaintext HTTP (no service-ca), and the platform condition remains
+  `PlatformUnverified`.
+
 ## 1. Build and push images
 
 Three images are built from `build/Dockerfile.{agent,operator,registrar}`:
@@ -135,7 +159,7 @@ Which remote prefixes are accepted (guardrails).
 | Field | Description |
 |-------|-------------|
 | `isdASes` | Remote ISD-ASes to exchange prefixes with. At least one required; each must match `\d+-([0-9a-fA-F_:]+|\d+)` (e.g. `1-ff00:0:110`). |
-| `forbiddenCIDRs` | IPv4 CIDRs never accepted from remotes. The operator appends the cluster's IPv4 pod and service networks automatically and ignores IPv6 ranges because the policy engine is IPv4-only. Entries that pass CRD validation but are not valid CIDRs (e.g. `10.0.0.0/33`) fail the reconcile with `Degraded` reason `ApplyFailed` instead of being silently dropped from the deny list. |
+| `forbiddenCIDRs` | IPv4 CIDRs never accepted from remotes. The operator appends the cluster's IPv4 pod and service networks automatically: on OpenShift from the cluster network config, and generically from node `spec.podCIDRs` plus the `networking.k8s.io` ServiceCIDR API (vanilla Kubernetes). IPv6 ranges are ignored because the policy engine is IPv4-only. Entries that pass CRD validation but are not valid CIDRs (e.g. `10.0.0.0/33`) fail the reconcile with `Degraded` reason `ApplyFailed` instead of being silently dropped from the deny list. |
 | `underlayCIDRs` | IPv4 transport networks used between nodes and the local SCION AS. Always excluded from learned SCION routes to keep bootstrap, registrar, probes, and border-router traffic outside the tunnel. Not schema-enforced, but omitting it on a topology where remote peers advertise the underlay causes the deadlock described above — treat it as required in practice. |
 
 ### spec.dataplane (optional)

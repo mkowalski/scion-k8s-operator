@@ -123,7 +123,13 @@ route, and undeploy removes tunnel and registration state.
    TLS mandatory outside dev. Agent metrics on :9465 are now HTTPS with
    TokenReview/SAR scraper auth on OpenShift (service-ca); vanilla
    Kubernetes still serves plaintext without auth.
-8. Dependency watch: scionproto pinned at v0.15.1; `private/` package churn
+8. Vanilla Kubernetes: validated in CI on kind/kindnetd (see
+   `test/e2e/kind/`), including generic forbidden-CIDR derivation (node
+   podCIDRs + ServiceCIDR API) and the masquerade-exclusion requirement.
+   Open: Calico and Cilium cluster-pool IPAM (no `node.spec.podCIDR`; the
+   agent refuses to start), per-CNI masquerade detection, cert-manager or
+   self-signed metrics TLS.
+9. Dependency watch: scionproto pinned at v0.15.1; `private/` package churn
    is expected on bumps — the two isolation files (`internal/agent/sig`,
    `internal/agent/daemonapi`) are the designated blast radius. The
    `grandcat/zeroconf` (mDNS) dependency is lightly maintained;

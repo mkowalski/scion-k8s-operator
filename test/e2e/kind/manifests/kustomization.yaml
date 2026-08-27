@@ -1,0 +1,14 @@
+# Vanilla-Kubernetes install subset: everything from config/manifests except
+# monitoring.yaml (ServiceMonitor/PrometheusRule CRDs are OpenShift/
+# prometheus-operator specific and absent on a plain kind cluster).
+# Build with: kustomize build --load-restrictor LoadRestrictionsNone
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../../config/crd
+  - ../../../../config/manifests/namespace.yaml
+  - ../../../../config/manifests/rbac.yaml
+  - ../../../../config/manifests/operator.yaml
+images:
+  - name: quay.io/mkowalski/scion-operator
+    newTag: e2e

@@ -2,7 +2,9 @@
 bin/
 docs/
 hack/
+!hack/dev-scion-topology/serve-discovery.py
 test/
+!test/e2e/kind/scion-as-entrypoint.sh
 /agent
 /operator
 /registrar
