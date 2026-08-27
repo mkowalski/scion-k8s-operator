@@ -348,6 +348,10 @@ func resetStaleTrustCache(ctx context.Context, certsDir, stateDir string) error 
 	if loadErr == nil {
 		return nil
 	}
+	// TODO(scionproto/scion#4977): narrow this to the typed TRC-conflict
+	// error once upstream ships one; ErrWriteFailed also matches unrelated
+	// write failures (e.g. disk full), which we then "handle" by resetting
+	// caches — harmless but noisy.
 	if !errors.Is(loadErr, scdb.ErrWriteFailed) {
 		return serrors.Wrap("preflight TRC load", loadErr)
 	}
