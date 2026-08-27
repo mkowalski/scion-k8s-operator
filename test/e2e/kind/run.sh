@@ -184,8 +184,13 @@ POD_IP=$(kubectl -n "$NAMESPACE" get pod scion-e2e-web -o jsonpath='{.status.pod
 NODE=$(kubectl -n "$NAMESPACE" get pod scion-e2e-web -o jsonpath='{.spec.nodeName}')
 log "workload pod $POD_IP on $NODE"
 
-log "route to remote must select scion0"
-route=$("$ENGINE" exec "$NODE" ip -4 route get "$REMOTE_PING_IP")
+log "route to remote must select scion0 (SGRP learning is async)"
+route=""
+for _ in $(seq 18); do
+    route=$("$ENGINE" exec "$NODE" ip -4 route get "$REMOTE_PING_IP" 2>/dev/null || true)
+    echo "$route" | grep -q "dev scion0" && break
+    sleep 5
+done
 echo "$route" | grep -q "dev scion0" || die "route does not select scion0: $route"
 
 log "egress: pod -> remote echo over SCION"
