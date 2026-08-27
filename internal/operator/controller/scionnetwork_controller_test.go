@@ -12,6 +12,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -758,4 +759,47 @@ func TestUpdateStatusUnreadyGrace(t *testing.T) {
 			t.Fatalf("status.nodes.degraded = %v, want node1", sn.Status.Nodes.Degraded)
 		}
 	})
+}
+
+// TestClusterForbiddenCIDRsVanillaDerivation: without the OpenShift network
+// config, cluster networks must still enter the deny list — from node pod
+// CIDRs (node-CIDR-allocator IPAM) and the networking.k8s.io ServiceCIDR
+// API. IPv6 entries are filtered.
+func TestClusterForbiddenCIDRsVanillaDerivation(t *testing.T) {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "n1"},
+		Spec:       corev1.NodeSpec{PodCIDRs: []string{"10.244.0.0/24", "fd00:10:244::/64"}},
+	}
+	nodeLegacy := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "n2"},
+		Spec:       corev1.NodeSpec{PodCIDR: "10.244.1.0/24"},
+	}
+	svcCIDR := &networkingv1.ServiceCIDR{
+		ObjectMeta: metav1.ObjectMeta{Name: "kubernetes"},
+		Spec: networkingv1.ServiceCIDRSpec{
+			CIDRs: []string{"10.96.0.0/16", "fd00:10:96::/112"},
+		},
+	}
+	c, scheme := newFakeClient(t, node, nodeLegacy, svcCIDR)
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+
+	sn := newScionNetwork()
+	sn.Spec.AcceptPolicy.UnderlayCIDRs = []string{"192.168.111.0/24"}
+	got, openshift, err := r.clusterForbiddenCIDRs(context.Background(), sn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if openshift {
+		t.Fatal("openshift = true on a vanilla fake cluster")
+	}
+	for _, want := range []string{"10.244.0.0/24", "10.244.1.0/24", "10.96.0.0/16", "192.168.111.0/24"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("forbidden CIDRs = %v, missing %s", got, want)
+		}
+	}
+	for _, bad := range []string{"fd00:10:244::/64", "fd00:10:96::/112"} {
+		if slices.Contains(got, bad) {
+			t.Errorf("forbidden CIDRs = %v, IPv6 %s must be filtered", got, bad)
+		}
+	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -383,6 +384,7 @@ func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *
 	}
 	out = append(out, underlay...)
 
+	openshift := false
 	nc := &unstructured.Unstructured{}
 	nc.SetGroupVersionKind(schema.GroupVersionKind{
 		Group: "config.openshift.io", Version: "v1", Kind: "Network",
@@ -390,6 +392,7 @@ func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *
 	err = r.Get(ctx, types.NamespacedName{Name: "cluster"}, nc)
 	switch {
 	case err == nil:
+		openshift = true
 		cns, _, _ := unstructured.NestedSlice(nc.Object, "spec", "clusterNetwork")
 		for _, cn := range cns {
 			if m, ok := cn.(map[string]interface{}); ok {
@@ -405,12 +408,76 @@ func (r *ScionNetworkReconciler) clusterForbiddenCIDRs(ctx context.Context, sn *
 			}
 		}
 	case apierrors.IsNotFound(err) || meta.IsNoMatchError(err):
-		// Vanilla Kubernetes: no OpenShift network config.
-		return dedupe(out), false, nil
+		// Vanilla Kubernetes: no OpenShift network config; the generic
+		// derivation below is the only cluster-network source.
 	default:
 		return nil, false, fmt.Errorf("read openshift network config: %w", err)
 	}
-	return dedupe(out), true, nil
+
+	// Generic derivation, CNI-independent: the union of node pod CIDRs
+	// (node-CIDR-allocator IPAM) and the ServiceCIDR API. Without this,
+	// vanilla clusters would run with no cluster networks in the deny
+	// list — a remote AS could advertise prefixes overlapping the pod or
+	// service network. On OpenShift it is a harmless union with the
+	// network config read above.
+	nodeCIDRs, err := r.nodePodCIDRs(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	out = append(out, nodeCIDRs...)
+	svcCIDRs, err := r.serviceCIDRs(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	out = append(out, svcCIDRs...)
+	return dedupe(out), openshift, nil
+}
+
+// nodePodCIDRs returns the IPv4 pod CIDRs allocated to nodes via the
+// node-CIDR-allocator (spec.podCIDRs / spec.podCIDR). CNIs with their own
+// IPAM (OVN-Kubernetes, Calico, Cilium cluster-pool) leave these empty;
+// OVN-K clusters are covered by the OpenShift network config instead.
+func (r *ScionNetworkReconciler) nodePodCIDRs(ctx context.Context) ([]string, error) {
+	nodes := &corev1.NodeList{}
+	if err := r.List(ctx, nodes); err != nil {
+		return nil, fmt.Errorf("list nodes for pod CIDR derivation: %w", err)
+	}
+	var out []string
+	for i := range nodes.Items {
+		cidrs := nodes.Items[i].Spec.PodCIDRs
+		if len(cidrs) == 0 && nodes.Items[i].Spec.PodCIDR != "" {
+			cidrs = []string{nodes.Items[i].Spec.PodCIDR}
+		}
+		for _, cidr := range cidrs {
+			if isIPv4CIDR(cidr) {
+				out = append(out, cidr)
+			}
+		}
+	}
+	return out, nil
+}
+
+// serviceCIDRs returns the IPv4 service CIDRs from the networking.k8s.io
+// ServiceCIDR API (GA in recent Kubernetes). Absence of the API or missing
+// RBAC is tolerated: older clusters and OpenShift are covered by the
+// network config read in clusterForbiddenCIDRs.
+func (r *ScionNetworkReconciler) serviceCIDRs(ctx context.Context) ([]string, error) {
+	list := &networkingv1.ServiceCIDRList{}
+	if err := r.List(ctx, list); err != nil {
+		if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) || meta.IsNoMatchError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list service CIDRs: %w", err)
+	}
+	var out []string
+	for i := range list.Items {
+		for _, cidr := range list.Items[i].Spec.CIDRs {
+			if isIPv4CIDR(cidr) {
+				out = append(out, cidr)
+			}
+		}
+	}
+	return out, nil
 }
 
 // specIPv4CIDRs validates user-provided CIDR entries from the ScionNetwork
