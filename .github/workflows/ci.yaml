@@ -64,8 +64,12 @@ jobs:
         run: docker build -f build/Dockerfile.${{ matrix.image }} -t scion-${{ matrix.image }}:ci .
 
   kind-e2e:
-    name: kind e2e (vanilla Kubernetes)
+    name: kind e2e (${{ matrix.cni }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cni: [kindnet, calico]
     steps:
       - uses: actions/checkout@v5
       - name: Install kind
@@ -74,4 +78,4 @@ jobs:
             https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
           sudo chmod +x /usr/local/bin/kind
       - name: Run kind e2e
-        run: ./test/e2e/kind/run.sh
+        run: CNI=${{ matrix.cni }} ./test/e2e/kind/run.sh

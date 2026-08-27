@@ -51,22 +51,30 @@ hardware offload for host route integration.
 ### Vanilla Kubernetes
 
 The operator runs on plain Kubernetes (validated continuously by the kind
-e2e in CI, default kindnetd CNI — see `test/e2e/kind/`). Differences from
-OpenShift:
+e2e in CI, on both kindnetd and Calico — see `test/e2e/kind/`). Differences
+from OpenShift:
 
 - The CNI must route pod egress for non-cluster destinations through the
-  host routing table (native-routing CNIs and kindnet do), and the prefixes
-  accepted from remote ASes must be **excluded from the CNI's masquerade**
-  (ip-masq-agent `nonMasqueradeCIDRs`, Calico `natOutgoing`, Cilium
-  masquerade config, kind `KIND-MASQ-AGENT`). Masquerading into the
-  addressless `scion0` tun breaks traffic entirely, not just source
-  preservation.
-- The CNI must use node-CIDR-allocator IPAM (`node.spec.podCIDR(s)`); the
-  agent refuses to start when pod-CIDR advertisement is enabled but no
-  IPv4 pod CIDR is discoverable (Calico and Cilium cluster-pool IPAM are
-  not supported yet).
-- Cluster networks for the deny list come from node `spec.podCIDRs` and the
-  ServiceCIDR API instead of the OpenShift network config.
+  host routing table (native-routing CNIs, Calico, and kindnet do), and the
+  prefixes accepted from remote ASes must be **excluded from the CNI's
+  masquerade**. kindnet: a `KIND-MASQ-AGENT` RETURN rule. Calico: a
+  disabled IPPool covering the remote prefix with `disableBGPExport: true`
+  — the disabled pool exempts member destinations from `natOutgoing`
+  without assigning pod IPs, and without the BGP-export opt-out BIRD
+  advertises the pool into the node mesh, where the resulting route
+  outranks the SCION route. Masquerading into the addressless `scion0` tun
+  breaks traffic outright, not just source preservation.
+- Per-node pod prefixes come from `node.spec.podCIDR(s)`
+  (node-CIDR-allocator IPAM) or, on Calico, from the IPAM BlockAffinity
+  objects, which take priority (the Node's allocator-assigned CIDR is
+  ignored by Calico and would misroute return traffic). Because Calico
+  allocates blocks on demand, the agent re-resolves and re-advertises its
+  prefixes every 30 seconds. Cilium cluster-pool IPAM is not supported
+  yet; the agent refuses to start when pod-CIDR advertisement is enabled
+  but no IPv4 prefix is discoverable from any static source.
+- Cluster networks for the deny list come from node `spec.podCIDRs`, the
+  ServiceCIDR API, and enabled Calico IPPools instead of the OpenShift
+  network config.
 - Skip `monitoring.yaml` unless prometheus-operator CRDs are installed
   (`test/e2e/kind/manifests/` is a ready-made subset), metrics stay
   plaintext HTTP (no service-ca), and the platform condition remains

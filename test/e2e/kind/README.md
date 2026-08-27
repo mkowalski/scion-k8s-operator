@@ -1,9 +1,9 @@
 # kind e2e — vanilla Kubernetes
 
-`run.sh` proves the operator on plain Kubernetes (kind, default kindnetd
-CNI): a two-node kind cluster plus a single-container two-AS SCION topology
-(`Dockerfile.scion-as`) on the kind container network. It runs in CI on
-every push/PR (`kind-e2e` job) and takes a few minutes.
+`run.sh` proves the operator on plain Kubernetes: a two-node kind cluster
+plus a single-container two-AS SCION topology (`Dockerfile.scion-as`) on
+the kind container network. Two CNI variants run in CI on every push/PR
+(`kind-e2e` matrix, `CNI=kindnet|calico`), a few minutes each.
 
 What it asserts:
 
@@ -18,13 +18,14 @@ What it asserts:
 - the remote site reaches the pod IP back through the tunnel,
 - deleting the ScionNetwork deregisters the SIGs and removes the tun.
 
-Masquerade: kindnetd masquerades pod→external traffic, which would both
-break source preservation and mangle traffic onto the addressless tun. The
-script exempts the remote SCION prefix on every node
-(`KIND-MASQ-AGENT` RETURN rule). Real vanilla clusters need the equivalent
-CNI-specific exclusion (ip-masq-agent `nonMasqueradeCIDRs`, Calico
-`natOutgoing`, Cilium masquerade config) for the prefixes they accept from
-remote ASes.
+Masquerade: both CNIs masquerade pod→external traffic, which would break
+source preservation and mangle traffic onto the addressless tun. kindnet:
+a `KIND-MASQ-AGENT` RETURN rule per node. Calico: a disabled IPPool over
+the remote prefix with `disableBGPExport: true` (without it BIRD exports
+the pool CIDR into the node mesh and the proto-bird route outranks the
+SCION route). The Calico variant additionally proves BlockAffinity-based
+pod-CIDR discovery — Calico ignores `node.spec.podCIDR`, so the agent must
+advertise the IPAM blocks instead.
 
 Local run (docker):
 
@@ -32,10 +33,10 @@ Local run (docker):
 ./test/e2e/kind/run.sh
 ```
 
-Local run (podman):
+Local run (podman, optionally with Calico):
 
 ```sh
-CONTAINER_ENGINE=podman KIND_EXPERIMENTAL_PROVIDER=podman ./test/e2e/kind/run.sh
+CONTAINER_ENGINE=podman KIND_EXPERIMENTAL_PROVIDER=podman CNI=calico ./test/e2e/kind/run.sh
 ```
 
 `KEEP=1` keeps the cluster and AS container for debugging.

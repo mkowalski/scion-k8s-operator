@@ -11,10 +11,13 @@
 #
 # Environment:
 #   CONTAINER_ENGINE  docker (default) | podman
+#   CNI               kindnet (default) | calico
 #   KEEP=1            keep the cluster and AS container on exit
 set -euo pipefail
 
 ENGINE=${CONTAINER_ENGINE:-docker}
+CNI=${CNI:-kindnet}
+CALICO_VERSION=v3.30.3
 CLUSTER=scion-e2e
 AS_NAME=scion-e2e-as
 REMOTE_PREFIX=192.168.100.0/24
@@ -55,9 +58,26 @@ log "building images (operator, agent, scion-as)"
 "$ENGINE" build -q -f "$here/Dockerfile.scion-as" -t scion-as:e2e "$repo"
 
 # --- cluster -------------------------------------------------------------------
-log "creating kind cluster"
+log "creating kind cluster (CNI: $CNI)"
 kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
-kind create cluster --config "$here/kind-config.yaml" --wait 3m
+kind_config="$here/kind-config.yaml"
+[ "$CNI" = "calico" ] && kind_config="$here/kind-config-calico.yaml"
+# With disableDefaultCNI nodes stay NotReady until Calico is installed, so
+# --wait only applies to the kindnet config.
+kind_wait="--wait 3m"
+[ "$CNI" = "calico" ] && kind_wait=""
+# shellcheck disable=SC2086  # intentional word splitting of the wait flag
+kind create cluster --config "$kind_config" $kind_wait
+
+if [ "$CNI" = "calico" ]; then
+    log "installing Calico $CALICO_VERSION"
+    curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/$CALICO_VERSION/manifests/calico.yaml" \
+        | sed -e 's|# - name: CALICO_IPV4POOL_CIDR|- name: CALICO_IPV4POOL_CIDR|' \
+              -e 's|#   value: "192.168.0.0/16"|  value: "10.244.0.0/16"|' \
+        | kubectl apply -f - >/dev/null
+    kubectl -n kube-system rollout status ds/calico-node --timeout=5m
+    kubectl wait --for=condition=Ready node --all --timeout=3m
+fi
 # image-archive works identically for docker and podman image stores; one
 # archive per image (podman treats extra args to `save` as additional tags
 # of the first image, silently collapsing them onto one image ID).
@@ -96,18 +116,39 @@ curl -fsS "http://$AS_IP:8041/topology" | grep -q "1-ff00:0:110" || die "discove
 curl -fsS -H "Authorization: Bearer $REGISTRAR_TOKEN" "http://$AS_IP:8642/v1/sigs" >/dev/null || die "registrar not serving"
 
 # --- masquerade exclusion --------------------------------------------------------
-# kindnetd masquerades pod->external traffic; traffic steered into scion0
-# must keep its pod source (and MASQUERADE onto an addressless tun would
-# break entirely). Exempt the remote SCION prefix on every node.
-for node in $(kind get nodes --name "$CLUSTER"); do
-    if "$ENGINE" exec "$node" iptables -t nat -S KIND-MASQ-AGENT >/dev/null 2>&1; then
-        "$ENGINE" exec "$node" iptables -t nat -I KIND-MASQ-AGENT 1 -d "$REMOTE_PREFIX" \
-            -m comment --comment "scion-e2e: no masquerade into the SCION tunnel" -j RETURN
-    else
-        "$ENGINE" exec "$node" iptables -t nat -I POSTROUTING 1 -d "$REMOTE_PREFIX" \
-            -m comment --comment "scion-e2e: no masquerade into the SCION tunnel" -j ACCEPT
-    fi
-done
+# Pod->external traffic is masqueraded by the CNI; traffic steered into
+# scion0 must keep its pod source (and MASQUERADE onto an addressless tun
+# would break entirely). Exempt the remote SCION prefix per CNI:
+# - kindnet: RETURN rule in its KIND-MASQ-AGENT iptables chain per node.
+# - calico: a disabled IPPool covering the prefix — felix's natOutgoing
+#   only masquerades destinations outside every IPPool, so member
+#   destinations are exempt while the disabled pool assigns no pod IPs.
+#   disableBGPExport is essential: without it BIRD advertises the pool
+#   CIDR into the node mesh and the resulting proto-bird route outranks
+#   the SCION route on every other node.
+if [ "$CNI" = "calico" ]; then
+    kubectl apply -f - <<EOF
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: scion-remote-no-nat
+spec:
+  cidr: $REMOTE_PREFIX
+  disabled: true
+  disableBGPExport: true
+  natOutgoing: false
+EOF
+else
+    for node in $(kind get nodes --name "$CLUSTER"); do
+        if "$ENGINE" exec "$node" iptables -t nat -S KIND-MASQ-AGENT >/dev/null 2>&1; then
+            "$ENGINE" exec "$node" iptables -t nat -I KIND-MASQ-AGENT 1 -d "$REMOTE_PREFIX" \
+                -m comment --comment "scion-e2e: no masquerade into the SCION tunnel" -j RETURN
+        else
+            "$ENGINE" exec "$node" iptables -t nat -I POSTROUTING 1 -d "$REMOTE_PREFIX" \
+                -m comment --comment "scion-e2e: no masquerade into the SCION tunnel" -j ACCEPT
+        fi
+    done
+fi
 
 # --- operator --------------------------------------------------------------------
 log "deploying operator"
@@ -186,7 +227,7 @@ log "workload pod $POD_IP on $NODE"
 
 log "route to remote must select scion0 (SGRP learning is async)"
 route=""
-for _ in $(seq 18); do
+for _ in $(seq 36); do
     route=$("$ENGINE" exec "$NODE" ip -4 route get "$REMOTE_PING_IP" 2>/dev/null || true)
     echo "$route" | grep -q "dev scion0" && break
     sleep 5
@@ -194,8 +235,18 @@ done
 echo "$route" | grep -q "dev scion0" || die "route does not select scion0: $route"
 
 log "egress: pod -> remote echo over SCION"
-kubectl -n "$NAMESPACE" exec scion-e2e-web -- \
-    wget -qO /dev/null -T 10 "http://$REMOTE_PING_IP:$REMOTE_TCP_PORT/" || die "egress request failed"
+# Retried: with Calico the pod's /26 IPAM block is allocated when the pod
+# lands and only then advertised (agent refresh + SGRP), so the return
+# path for the reply can lag the pod by tens of seconds.
+egress_ok=0
+for _ in $(seq 18); do
+    if kubectl -n "$NAMESPACE" exec scion-e2e-web -- \
+        wget -qO /dev/null -T 10 "http://$REMOTE_PING_IP:$REMOTE_TCP_PORT/" 2>/dev/null; then
+        egress_ok=1; break
+    fi
+    sleep 5
+done
+[ "$egress_ok" = 1 ] || die "egress request failed"
 # Path-conclusive: the echo's access log must show the pod source (no
 # masquerade), and the nft guard already dropped anything not from sigb.
 "$ENGINE" logs "$AS_NAME" 2>&1 | grep "\[echo\]" | grep -q "$POD_IP" || \
