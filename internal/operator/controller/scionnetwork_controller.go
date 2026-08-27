@@ -258,7 +258,7 @@ func (r *ScionNetworkReconciler) markApplyFailed(ctx context.Context, sn *v1alph
 // apply creates or updates all managed objects. Every object except the
 // Namespace carries an owner reference to the ScionNetwork; a cluster-scoped
 // owner is valid for both cluster-scoped and namespaced dependents.
-func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNetwork, image string, forbidden []string, metricsTLS bool) error {
+func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNetwork, image string, forbidden []string, openshift bool) error {
 	// Namespace first: the namespaced objects need it. Deliberately NO
 	// owner reference here: the operator Deployment itself runs in
 	// scion-system (shipped by config/manifests), so garbage-collecting the
@@ -277,6 +277,16 @@ func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNe
 		return nil
 	}); err != nil {
 		return fmt.Errorf("apply namespace: %w", err)
+	}
+
+	// Metrics TLS is unconditional. On OpenShift service-ca fills the
+	// serving-cert secret (via the annotated Service); elsewhere the
+	// operator issues and rotates a self-signed one (after the namespace
+	// exists) and publishes its CA for scrapers.
+	if !openshift {
+		if err := r.ensureMetricsTLS(ctx, sn); err != nil {
+			return err
+		}
 	}
 
 	sa := render.ServiceAccount()
@@ -305,8 +315,8 @@ func (r *ScionNetworkReconciler) apply(ctx context.Context, sn *v1alpha1.ScionNe
 		return fmt.Errorf("apply clusterrolebinding: %w", err)
 	}
 
-	ds := render.DaemonSet(sn, image, forbidden, metricsTLS)
-	want := render.DaemonSet(sn, image, forbidden, metricsTLS)
+	ds := render.DaemonSet(sn, image, forbidden, true)
+	want := render.DaemonSet(sn, image, forbidden, true)
 	if err := r.applyObject(ctx, sn, ds, func() error {
 		if ds.Labels == nil {
 			ds.Labels = map[string]string{}

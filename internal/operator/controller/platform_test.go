@@ -310,3 +310,33 @@ func TestRouteAdvertisementAcceptedConditions(t *testing.T) {
 		}
 	}
 }
+
+// TestVanillaPlatformMessageCNIHint: the PlatformUnverified message names
+// the detected CNI and its masquerade-exemption recipe.
+func TestVanillaPlatformMessageCNIHint(t *testing.T) {
+	calicoPool := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "crd.projectcalico.org/v1", "kind": "IPPool",
+		"metadata": map[string]any{"name": "default"},
+	}}
+	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "crd.projectcalico.org", Version: "v1", Kind: "IPPool"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{
+		Group: "crd.projectcalico.org", Version: "v1", Kind: "IPPoolList"}, &unstructured.UnstructuredList{})
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(calicoPool).Build()
+	r := &ScionNetworkReconciler{Client: c}
+	got := r.detectPodEgressPlatform(context.Background())
+	if got.Status != metav1.ConditionUnknown || got.Reason != "PlatformUnverified" {
+		t.Fatalf("platform = %+v, want Unknown/PlatformUnverified", got)
+	}
+	if !strings.Contains(got.Message, "Calico detected") ||
+		!strings.Contains(got.Message, "disableBGPExport") {
+		t.Fatalf("message %q lacks the Calico hint", got.Message)
+	}
+}

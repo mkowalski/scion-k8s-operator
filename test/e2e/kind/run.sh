@@ -236,6 +236,39 @@ if [ "$CNI" = "cilium" ]; then
     esac
 fi
 
+# --- metrics TLS + auth (operator-issued CA on vanilla) -------------------------------
+log "metrics: HTTPS + TokenReview auth with operator-issued CA"
+kubectl apply -f - >/dev/null <<'EOF2'
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: e2e-metrics-reader, namespace: scion-system }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: e2e-metrics-reader }
+rules: [{ nonResourceURLs: ["/metrics"], verbs: ["get"] }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: e2e-metrics-reader }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: e2e-metrics-reader }
+subjects: [{ kind: ServiceAccount, name: e2e-metrics-reader, namespace: scion-system }]
+EOF2
+METRICS_TOKEN=$(kubectl -n "$NAMESPACE" create token e2e-metrics-reader)
+kubectl -n "$NAMESPACE" get configmap scion-node-agent-metrics-ca \
+    -o jsonpath='{.data.ca\.crt}' | "$ENGINE" exec -i "$AS_NAME" sh -c 'cat > /tmp/metrics-ca.crt'
+WORKER_IP=$("$ENGINE" inspect -f '{{ (index .NetworkSettings.Networks "kind").IPAddress }}' "$CLUSTER-worker")
+metrics_curl() { # extra curl args...
+    "$ENGINE" exec "$AS_NAME" curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+        --cacert /tmp/metrics-ca.crt \
+        --resolve "scion-node-agent-metrics.$NAMESPACE.svc:9465:$WORKER_IP" \
+        "$@" "https://scion-node-agent-metrics.$NAMESPACE.svc:9465/metrics"
+}
+code=$(metrics_curl)
+[ "$code" = "401" ] || die "unauthenticated metrics scrape: got $code, want 401"
+code=$(metrics_curl -H "Authorization: Bearer $METRICS_TOKEN")
+[ "$code" = "200" ] || die "authorized metrics scrape: got $code, want 200 (CA-verified TLS)"
+
 # --- workload + connectivity ---------------------------------------------------------
 log "deploying sample workload"
 kubectl -n "$NAMESPACE" apply -f - <<EOF

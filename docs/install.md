@@ -75,10 +75,19 @@ from OpenShift:
 - Cluster networks for the deny list come from node `spec.podCIDRs`, the
   ServiceCIDR API, and enabled Calico IPPools instead of the OpenShift
   network config.
+- Cilium cluster-pool IPAM is supported analogously: pod prefixes come
+  from `CiliumNode` objects, the masquerade exclusion is the BPF
+  ip-masq-agent (`ipMasqAgent.config.nonMasqueradeCIDRs`), and
+  `bpf.masquerade` requires `nodePort.enabled`.
+- Metrics are HTTPS with TokenReview/SAR scraper auth everywhere: the
+  operator issues and rotates a self-signed serving certificate when
+  service-ca is absent and publishes its CA in the
+  `scion-node-agent-metrics-ca` ConfigMap for scrapers to pin (TLS
+  ServerName `scion-node-agent-metrics.scion-system.svc`).
 - Skip `monitoring.yaml` unless prometheus-operator CRDs are installed
-  (`test/e2e/kind/manifests/` is a ready-made subset), metrics stay
-  plaintext HTTP (no service-ca), and the platform condition remains
-  `PlatformUnverified`.
+  (`test/e2e/kind/manifests/` is a ready-made subset), and the platform
+  condition remains `PlatformUnverified` — with a best-effort CNI hint
+  (Calico/Cilium) naming the masquerade-exemption recipe to check.
 
 ## 1. Build and push images
 

@@ -2,8 +2,8 @@
 
 `run.sh` proves the operator on plain Kubernetes: a two-node kind cluster
 plus a single-container two-AS SCION topology (`Dockerfile.scion-as`) on
-the kind container network. Two CNI variants run in CI on every push/PR
-(`kind-e2e` matrix, `CNI=kindnet|calico`), a few minutes each.
+the kind container network. Three CNI variants run in CI on every push/PR
+(`kind-e2e` matrix, `CNI=kindnet|calico|cilium`), a few minutes each.
 
 What it asserts:
 
@@ -16,6 +16,9 @@ What it asserts:
   an nftables guard in the AS container drops anything that did not arrive
   through the remote SIG's tun),
 - the remote site reaches the pod IP back through the tunnel,
+- metrics are HTTPS with TokenReview auth even without service-ca: the
+  operator-issued CA (ConfigMap `scion-node-agent-metrics-ca`) verifies the
+  endpoint, an authorized ServiceAccount token gets 200, no token gets 401,
 - deleting the ScionNetwork deregisters the SIGs and removes the tun.
 
 Masquerade: both CNIs masquerade pod→external traffic, which would break
@@ -25,7 +28,9 @@ the remote prefix with `disableBGPExport: true` (without it BIRD exports
 the pool CIDR into the node mesh and the proto-bird route outranks the
 SCION route). The Calico variant additionally proves BlockAffinity-based
 pod-CIDR discovery — Calico ignores `node.spec.podCIDR`, so the agent must
-advertise the IPAM blocks instead.
+advertise the IPAM blocks instead. The Cilium variant (helm, cluster-pool
+IPAM, BPF ip-masq-agent) uses a pool disjoint from the node-allocator range
+for the same reason: only CiliumNode-based advertisement makes it pass.
 
 Local run (docker):
 

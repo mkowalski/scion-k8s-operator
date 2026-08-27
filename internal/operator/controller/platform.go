@@ -11,6 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type podEgressPlatform struct {
@@ -35,7 +37,7 @@ func (r *ScionNetworkReconciler) detectPodEgressPlatform(ctx context.Context) po
 			return podEgressPlatform{
 				Status:  metav1.ConditionUnknown,
 				Reason:  "PlatformUnverified",
-				Message: "OpenShift OVN-Kubernetes gateway configuration is not available",
+				Message: r.vanillaPlatformMessage(ctx),
 			}
 		}
 		return platformDetectionFailed(fmt.Errorf("read OpenShift network operator config: %w", err))
@@ -83,6 +85,38 @@ func platformDetectionFailed(err error) podEgressPlatform {
 		Reason:  "PlatformDetectionFailed",
 		Message: err.Error(),
 	}
+}
+
+// vanillaPlatformMessage enriches the PlatformUnverified condition with a
+// best-effort CNI hint on non-OpenShift clusters. Source preservation
+// cannot be verified there (masquerade exemptions for dynamically learned
+// prefixes are not observable through any API), so the status stays
+// Unknown, but the message tells the operator of the cluster what to check.
+func (r *ScionNetworkReconciler) vanillaPlatformMessage(ctx context.Context) string {
+	const base = "OpenShift OVN-Kubernetes gateway configuration is not available"
+	if r.apiPresent(ctx, schema.GroupVersionKind{
+		Group: "crd.projectcalico.org", Version: "v1", Kind: "IPPoolList",
+	}) {
+		return base + "; Calico detected — source preservation requires prefixes " +
+			"accepted from remote ASes to be covered by a disabled IPPool with " +
+			"disableBGPExport (see docs/install.md, Vanilla Kubernetes)"
+	}
+	if r.apiPresent(ctx, schema.GroupVersionKind{
+		Group: "cilium.io", Version: "v2", Kind: "CiliumNodeList",
+	}) {
+		return base + "; Cilium detected — source preservation requires a " +
+			"masquerade exclusion (BPF ip-masq-agent nonMasqueradeCIDRs) for " +
+			"prefixes accepted from remote ASes (see docs/install.md, Vanilla Kubernetes)"
+	}
+	return base + "; ensure the CNI excludes prefixes accepted from remote ASes " +
+		"from pod-egress masquerade (see docs/install.md, Vanilla Kubernetes)"
+}
+
+// apiPresent probes for an optional API by listing it with a limit of 1.
+func (r *ScionNetworkReconciler) apiPresent(ctx context.Context, listGVK schema.GroupVersionKind) bool {
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(listGVK)
+	return r.List(ctx, list, client.Limit(1)) == nil
 }
 
 func classifyPodEgressPlatform(network *unstructured.Unstructured) podEgressPlatform {

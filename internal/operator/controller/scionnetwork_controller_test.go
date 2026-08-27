@@ -918,3 +918,47 @@ func TestClusterForbiddenCIDRsCiliumNodes(t *testing.T) {
 		t.Fatalf("forbidden CIDRs = %v, IPv6 must be filtered", got)
 	}
 }
+
+// TestEnsureMetricsTLS: a usable serving cert + CA configmap appear; a
+// valid existing cert (e.g. service-ca-issued) is left untouched.
+func TestEnsureMetricsTLS(t *testing.T) {
+	sn := newScionNetwork()
+	c, scheme := newFakeClient(t, sn)
+	r := &ScionNetworkReconciler{Client: c, Scheme: scheme}
+	if err := r.ensureMetricsTLS(context.Background(), sn); err != nil {
+		t.Fatal(err)
+	}
+	sec := &corev1.Secret{}
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Namespace: render.Namespace, Name: "scion-node-agent-metrics-tls"}, sec); err != nil {
+		t.Fatal(err)
+	}
+	if !metricsCertUsable(sec.Data["tls.crt"]) {
+		t.Fatal("generated certificate not usable for the metrics service name")
+	}
+	if len(sec.Data["tls.key"]) == 0 || len(sec.Data["ca.crt"]) == 0 {
+		t.Fatal("key or CA missing from secret")
+	}
+	cm := &corev1.ConfigMap{}
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Namespace: render.Namespace, Name: "scion-node-agent-metrics-ca"}, cm); err != nil {
+		t.Fatal(err)
+	}
+	if cm.Data["ca.crt"] != string(sec.Data["ca.crt"]) {
+		t.Fatal("published CA does not match the secret CA")
+	}
+
+	// Idempotency / non-interference: re-run must not rotate a valid cert.
+	before := string(sec.Data["tls.crt"])
+	if err := r.ensureMetricsTLS(context.Background(), sn); err != nil {
+		t.Fatal(err)
+	}
+	after := &corev1.Secret{}
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Namespace: render.Namespace, Name: "scion-node-agent-metrics-tls"}, after); err != nil {
+		t.Fatal(err)
+	}
+	if string(after.Data["tls.crt"]) != before {
+		t.Fatal("valid certificate was rotated on re-run")
+	}
+}

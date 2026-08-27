@@ -81,6 +81,11 @@ func main() {
 				&corev1.Secret{}: {
 					Namespaces: map[string]cache.Config{render.Namespace: {}},
 				},
+				// The metrics CA ConfigMap; scoped so the informer does
+				// not require cluster-wide configmap read.
+				&corev1.ConfigMap{}: {
+					Namespaces: map[string]cache.Config{render.Namespace: {}},
+				},
 			},
 		},
 	})

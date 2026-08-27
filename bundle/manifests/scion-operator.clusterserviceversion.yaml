@@ -28,7 +28,7 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Networking
-    createdAt: "2026-08-27T12:38:43Z"
+    createdAt: "2026-08-27T13:47:03Z"
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: unknown
     repository: https://github.com/mkowalski/scion-k8s-operator
@@ -245,9 +245,23 @@ spec:
           resources:
           - secrets
           verbs:
+          - create
           - get
           - list
           - watch
+          - update
+          - patch
+        - apiGroups:
+          - ""
+          resources:
+          - configmaps
+          verbs:
+          - create
+          - get
+          - list
+          - watch
+          - update
+          - patch
         serviceAccountName: scion-operator
     strategy: deployment
   installModes:

@@ -121,16 +121,19 @@ route, and undeploy removes tunnel and registration state.
    (`--tls-cert`/`--tls-key` server-side, `ca.crt` secret key for pinning),
    but plaintext HTTP is still permitted with a warning; consider making
    TLS mandatory outside dev. Agent metrics on :9465 are now HTTPS with
-   TokenReview/SAR scraper auth on OpenShift (service-ca); vanilla
-   Kubernetes still serves plaintext without auth.
-8. Vanilla Kubernetes: validated in CI on kind with kindnetd and Calico
-   (see `test/e2e/kind/`) — generic forbidden-CIDR derivation (node
-   podCIDRs + ServiceCIDR API + enabled Calico IPPools), Calico
-   BlockAffinity pod-CIDR discovery with a 30s advertisement refresh
-   (blocks are allocated on demand), and per-CNI masquerade exclusion
-   (Calico needs a disabled, BGP-export-disabled IPPool). Open: Cilium
-   cluster-pool IPAM (agent refuses to start), per-CNI masquerade
-   detection, cert-manager or self-signed metrics TLS.
+   TokenReview/SAR scraper auth everywhere — service-ca on OpenShift,
+   an operator-issued rotated certificate elsewhere (CA published in the
+   scion-node-agent-metrics-ca ConfigMap).
+8. Vanilla Kubernetes: validated in CI on kind with kindnetd, Calico,
+   and Cilium (see `test/e2e/kind/`) — generic forbidden-CIDR derivation
+   (node podCIDRs + ServiceCIDR API + Calico IPPools + CiliumNodes),
+   CNI-IPAM pod-CIDR discovery (Calico BlockAffinity, CiliumNode) with a
+   30s advertisement refresh, per-CNI masquerade exclusion (Calico:
+   disabled + BGP-export-disabled IPPool; Cilium: BPF ip-masq-agent),
+   and operator-issued metrics serving certificates where service-ca is
+   absent. Open: verifying masquerade exemptions for dynamically learned
+   prefixes is not API-observable, so the platform condition stays
+   Unknown on vanilla (with a CNI-specific hint).
 9. Dependency watch: scionproto pinned at v0.15.1; `private/` package churn
    is expected on bumps — the two isolation files (`internal/agent/sig`,
    `internal/agent/daemonapi`) are the designated blast radius. The
