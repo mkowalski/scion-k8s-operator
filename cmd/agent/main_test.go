@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mkowalski/scion-k8s-operator/internal/agent/config"
@@ -131,5 +132,27 @@ func TestCloseOnceDoubleCall(t *testing.T) {
 	case <-ch:
 	default:
 		t.Fatal("channel not closed")
+	}
+}
+
+func TestCheckAdvertisable(t *testing.T) {
+	// No IPv4 pod CIDR discoverable (Calico/Cilium-style IPAM or
+	// IPv6-only): must error when advertisement is on, pass when off.
+	info := kube.NodeInfo{PodCIDRs: []string{"fd01::/64"}, InternalIP: "192.0.2.1"}
+	cfg := config.Config{NodeName: "n1", AdvertisePodCIDR: true}
+	nets := advertisedNets(info, cfg)
+	if err := checkAdvertisable(cfg, info, nets); err == nil ||
+		!strings.Contains(err.Error(), "no IPv4 pod CIDR") {
+		t.Fatalf("checkAdvertisable = %v, want no-IPv4-pod-CIDR error", err)
+	}
+	cfg.AdvertisePodCIDR = false
+	if err := checkAdvertisable(cfg, info, advertisedNets(info, cfg)); err != nil {
+		t.Fatalf("checkAdvertisable with advertisement off = %v, want nil", err)
+	}
+	// Healthy case.
+	info.PodCIDRs = []string{"10.244.0.0/24"}
+	cfg.AdvertisePodCIDR = true
+	if err := checkAdvertisable(cfg, info, advertisedNets(info, cfg)); err != nil {
+		t.Fatalf("checkAdvertisable healthy = %v, want nil", err)
 	}
 }

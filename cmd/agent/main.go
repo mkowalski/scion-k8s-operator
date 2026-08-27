@@ -96,6 +96,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Guardrail: pod-CIDR advertisement enabled but nothing to advertise.
+	if err := checkAdvertisable(cfg, info, in.AdvertisedNets); err != nil {
+		return err
+	}
 	if err := renderPolicies(in, trafficPolicyFile, routingPolicyFile); err != nil {
 		return fmt.Errorf("initial policy render: %w", err)
 	}
@@ -287,6 +291,22 @@ func localIA(confDir string) (string, error) {
 
 // advertisedNets assembles the prefixes this node announces: pod CIDRs
 // and/or the node IP as a host route, per config.
+// checkAdvertisable fails when pod-CIDR advertisement is enabled but no
+// IPv4 prefix was discovered. CNIs with their own IPAM (Calico, Cilium
+// cluster-pool) leave node.spec.podCIDR(s) empty, and IPv6-only allocations
+// are filtered because the dataplane is IPv4-only. Silently advertising
+// nothing would bring the tunnel up with no return path to this node's pods
+// — fail loudly instead.
+func checkAdvertisable(cfg config.Config, info kube.NodeInfo, nets []string) error {
+	if cfg.AdvertisePodCIDR && len(nets) == 0 {
+		return fmt.Errorf("pod CIDR advertisement is enabled but no IPv4 pod CIDR was discovered "+
+			"(node %s: podCIDRs=%v); the CNI must use node-CIDR-allocator IPAM, "+
+			"or set SCION_LOCAL_PREFIXES, or disable spec.advertisement.podCIDR",
+			cfg.NodeName, info.PodCIDRs)
+	}
+	return nil
+}
+
 func advertisedNets(info kube.NodeInfo, cfg config.Config) []string {
 	var nets []string
 	if cfg.AdvertisePodCIDR {
