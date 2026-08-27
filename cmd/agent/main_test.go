@@ -93,9 +93,12 @@ func TestAdvertisedNetsIPv4Only(t *testing.T) {
 func TestNodeInfoLocalPrefixesBypass(t *testing.T) {
 	t.Setenv("SCION_LOCAL_PREFIXES", "10.0.0.0/24, 10.0.1.0/24")
 	t.Setenv("SCION_NODE_IP", "192.0.2.7")
-	info, err := nodeInfo(t.Context(), config.Config{})
+	info, dynamicIPAM, err := nodeInfo(t.Context(), config.Config{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if dynamicIPAM {
+		t.Error("dynamicIPAM = true for SCION_LOCAL_PREFIXES bypass")
 	}
 	if want := []string{"10.0.0.0/24", "10.0.1.0/24"}; !reflect.DeepEqual(info.PodCIDRs, want) {
 		t.Errorf("PodCIDRs = %v, want %v", info.PodCIDRs, want)
@@ -108,7 +111,7 @@ func TestNodeInfoLocalPrefixesBypass(t *testing.T) {
 func TestNodeInfoLocalPrefixesInvalidIP(t *testing.T) {
 	t.Setenv("SCION_LOCAL_PREFIXES", "10.0.0.0/24")
 	t.Setenv("SCION_NODE_IP", "not-an-ip")
-	if _, err := nodeInfo(t.Context(), config.Config{}); err == nil {
+	if _, _, err := nodeInfo(t.Context(), config.Config{}); err == nil {
 		t.Error("expected error for invalid SCION_NODE_IP")
 	}
 }
@@ -116,7 +119,7 @@ func TestNodeInfoLocalPrefixesInvalidIP(t *testing.T) {
 func TestNodeInfoLocalPrefixesMissingIP(t *testing.T) {
 	t.Setenv("SCION_LOCAL_PREFIXES", "10.0.0.0/24")
 	t.Setenv("SCION_NODE_IP", "")
-	if _, err := nodeInfo(t.Context(), config.Config{}); err == nil {
+	if _, _, err := nodeInfo(t.Context(), config.Config{}); err == nil {
 		t.Error("expected error when SCION_NODE_IP is unset")
 	}
 }

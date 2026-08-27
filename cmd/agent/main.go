@@ -15,12 +15,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -56,6 +59,11 @@ func main() {
 	}
 }
 
+// advertRefreshInterval bounds how quickly a Calico IPAM block allocated
+// after startup (first pod on the node, node scale-up) becomes an
+// advertised prefix with a working return path.
+const advertRefreshInterval = 30 * time.Second
+
 func run(log *slog.Logger) error {
 	cfg, err := config.FromEnv()
 	if err != nil {
@@ -64,7 +72,7 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	info, err := nodeInfo(ctx, cfg)
+	info, dynamicIPAM, err := nodeInfo(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("node identity: %w", err)
 	}
@@ -97,8 +105,13 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	// Guardrail: pod-CIDR advertisement enabled but nothing to advertise.
+	// With dynamic IPAM (Calico) a node legitimately has no block until
+	// its first pod lands; the refresh loop below picks it up then.
 	if err := checkAdvertisable(cfg, info, in.AdvertisedNets); err != nil {
-		return err
+		if !dynamicIPAM {
+			return err
+		}
+		log.Warn("no pod CIDR to advertise yet; Calico allocates blocks on demand — will refresh", "err", err)
 	}
 	if err := renderPolicies(in, trafficPolicyFile, routingPolicyFile); err != nil {
 		return fmt.Errorf("initial policy render: %w", err)
@@ -124,25 +137,49 @@ func run(log *slog.Logger) error {
 	})
 
 	g.Go(func() error {
+		// Calico allocates IPAM blocks on demand: a node can gain its
+		// first block (or additional ones) at any time, so the advertised
+		// set must track the current allocation, not the startup snapshot.
+		var tick <-chan time.Time
+		if dynamicIPAM {
+			t := time.NewTicker(advertRefreshInterval)
+			defer t.Stop()
+			tick = t.C
+		}
+		rerender := func(reason string) {
+			in, err := policyInput(confDir, info, cfg)
+			if err != nil {
+				log.Error("policy input", "trigger", reason, "err", err)
+				return
+			}
+			if err := renderPolicies(in, trafficPolicyFile, routingPolicyFile); err != nil {
+				log.Error("policy re-render", "trigger", reason, "err", err)
+				return
+			}
+			select {
+			case reload <- struct{}{}:
+			default:
+			}
+			log.Info("policies re-rendered, reload triggered",
+				"trigger", reason, "advertised", in.AdvertisedNets)
+		}
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-topoChanged:
-				in, err := policyInput(confDir, info, cfg)
+				rerender("topology change")
+			case <-tick:
+				current, _, err := nodeInfo(ctx, cfg)
 				if err != nil {
-					log.Error("policy input after topology change", "err", err)
+					log.Error("node info refresh", "err", err)
 					continue
 				}
-				if err := renderPolicies(in, trafficPolicyFile, routingPolicyFile); err != nil {
-					log.Error("policy re-render", "err", err)
+				if slices.Equal(current.PodCIDRs, info.PodCIDRs) {
 					continue
 				}
-				select {
-				case reload <- struct{}{}:
-				default:
-				}
-				log.Info("topology changed; policies re-rendered, reload triggered")
+				info = current
+				rerender("pod CIDR change")
 			}
 		}
 	})
@@ -239,23 +276,51 @@ func run(log *slog.Logger) error {
 // nodeInfo determines this node's pod CIDRs and IP. If SCION_LOCAL_PREFIXES
 // is set (comma-separated CIDRs, plus SCION_NODE_IP), the Kubernetes API is
 // skipped entirely so the agent can run outside a cluster.
-func nodeInfo(ctx context.Context, cfg config.Config) (kube.NodeInfo, error) {
+// nodeInfo determines this node's pod CIDRs and IP. The second return
+// reports whether a dynamic-IPAM source (Calico BlockAffinity) is present:
+// on such clusters the prefix set changes at runtime and callers must
+// refresh it rather than trust the startup snapshot.
+func nodeInfo(ctx context.Context, cfg config.Config) (kube.NodeInfo, bool, error) {
 	if prefixes := os.Getenv("SCION_LOCAL_PREFIXES"); prefixes != "" {
 		ip := os.Getenv("SCION_NODE_IP")
 		if net.ParseIP(ip) == nil {
-			return kube.NodeInfo{}, fmt.Errorf("SCION_NODE_IP required and must be a valid IP when SCION_LOCAL_PREFIXES is set, got %q", ip)
+			return kube.NodeInfo{}, false, fmt.Errorf("SCION_NODE_IP required and must be a valid IP when SCION_LOCAL_PREFIXES is set, got %q", ip)
 		}
-		return kube.NodeInfo{PodCIDRs: split(prefixes), InternalIP: ip}, nil
+		return kube.NodeInfo{PodCIDRs: split(prefixes), InternalIP: ip}, false, nil
 	}
 	rc, err := rest.InClusterConfig()
 	if err != nil {
-		return kube.NodeInfo{}, fmt.Errorf("in-cluster config: %w", err)
+		return kube.NodeInfo{}, false, fmt.Errorf("in-cluster config: %w", err)
 	}
 	cs, err := kubernetes.NewForConfig(rc)
 	if err != nil {
-		return kube.NodeInfo{}, err
+		return kube.NodeInfo{}, false, err
 	}
-	return kube.GetNodeInfo(ctx, cs, cfg.NodeName)
+	info, err := kube.GetNodeInfo(ctx, cs, cfg.NodeName)
+	if err != nil {
+		return info, false, err
+	}
+	// Calico IPAM: pod prefixes live in BlockAffinity objects. They take
+	// priority over node.spec.podCIDR(s): on clusters with the node CIDR
+	// allocator enabled the Node carries a pod CIDR that Calico ignores,
+	// so advertising it would misroute return traffic. Absence of the
+	// BlockAffinity API means this is not a Calico cluster; fall through
+	// to the Node sources.
+	dc, err := dynamic.NewForConfig(rc)
+	if err != nil {
+		return info, false, err
+	}
+	calicoCIDRs, err := kube.CalicoPodCIDRs(ctx, dc, cfg.NodeName)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return info, false, nil
+		}
+		return info, false, err
+	}
+	if len(calicoCIDRs) > 0 {
+		info.PodCIDRs = calicoCIDRs
+	}
+	return info, true, nil
 }
 
 func policyInput(confDir string, info kube.NodeInfo, cfg config.Config) (policy.Input, error) {

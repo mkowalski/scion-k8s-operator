@@ -206,6 +206,11 @@ func ClusterRole() *rbacv1.ClusterRole {
 			Resources: []string{"nodes"},
 			Verbs:     []string{"get"},
 		}, {
+			// Calico IPAM pod-CIDR discovery (absent on other CNIs).
+			APIGroups: []string{"crd.projectcalico.org"},
+			Resources: []string{"blockaffinities"},
+			Verbs:     []string{"get", "list"},
+		}, {
 			APIGroups: []string{"authentication.k8s.io"},
 			Resources: []string{"tokenreviews"},
 			Verbs:     []string{"create"},

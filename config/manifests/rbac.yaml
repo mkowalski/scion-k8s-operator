@@ -56,6 +56,12 @@ rules:
   - apiGroups: ["networking.k8s.io"]
     resources: ["servicecidrs"]
     verbs: ["get", "list", "watch"]
+  # Calico: IPPools feed the forbidden list; blockaffinities read is held
+  # only so the agent ClusterRole granting it can be created (escalation
+  # prevention) — the operator itself never reads them.
+  - apiGroups: ["crd.projectcalico.org"]
+    resources: ["ippools", "blockaffinities"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

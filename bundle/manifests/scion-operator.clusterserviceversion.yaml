@@ -28,7 +28,7 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Networking
-    createdAt: "2026-08-27T08:04:04Z"
+    createdAt: "2026-08-27T10:43:06Z"
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: unknown
     repository: https://github.com/mkowalski/scion-k8s-operator
@@ -153,6 +153,15 @@ spec:
           - networking.k8s.io
           resources:
           - servicecidrs
+          verbs:
+          - get
+          - list
+          - watch
+        - apiGroups:
+          - crd.projectcalico.org
+          resources:
+          - ippools
+          - blockaffinities
           verbs:
           - get
           - list
