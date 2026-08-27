@@ -1,10 +1,12 @@
 # Known Gaps and Next Steps
 
 Honest inventory of what has NOT been verified and what must happen before
-this project is production-real. State as of the v0.1.0 merge to main
-(commit 835d957), updated after the first live e2e run on OpenShift
-(branch `live-e2e-fixes`, 2026-07-24), the SCION v0.15.1 dependency
-upgrade, and source-preserving OVN-K e2e validation (2026-08-20).
+this project is production-real. Last updated 2026-08-27, when the project
+was parked for ~1 month (see `handoff.md` for the pick-up guide): after
+the deep-review hardening + CI + registrar TLS (2026-08-25), the fresh
+live re-validation on OpenShift with two agent fixes (2026-08-26), and
+vanilla-Kubernetes support with a three-CNI kind e2e, universal metrics
+TLS, and upstream issue scionproto/scion#4977 (2026-08-27).
 
 ## Retired by live e2e runs
 

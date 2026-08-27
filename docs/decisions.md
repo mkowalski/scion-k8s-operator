@@ -151,3 +151,47 @@ namespaces rather than matching learned SCION destinations; BGP redistribution
 of learned SCION routes, because it adds a second routing authority and FRR
 coupling; eBPF/TC, because it duplicates routing policy below the kernel route
 table.
+
+## D16: Metrics are authenticated HTTPS everywhere, with in-agent auth
+
+The agent validates scrapers itself — TokenReview then a
+SubjectAccessReview for `get` on the `/metrics` non-resource URL
+(kube-rbac-proxy semantics, small positive-decision cache) — and serves
+TLS unconditionally. The certificate source is service-ca on OpenShift
+(annotated Service) and an operator-issued, rotated self-signed CA
+elsewhere, published in the `scion-node-agent-metrics-ca` ConfigMap for
+scrapers to pin. The operator never rotates a valid certificate it did
+not issue, so it cannot fight service-ca. Probes stay unauthenticated
+(kubelet must not depend on the apiserver), and when TLS material is
+expected but absent the agent stays unready rather than falling back to
+plaintext. Rejected: a kube-rbac-proxy sidecar (extra image, extra
+hostNetwork port, SCC churn) and plaintext-with-auth (bearer tokens in
+cleartext are worse than no auth).
+
+## D17: CNI-IPAM sources outrank node.spec.podCIDR, and are refreshed
+
+Calico (BlockAffinity) and Cilium cluster-pool (CiliumNode) allocate pod
+prefixes independently of the node-CIDR allocator, which may still
+populate `node.spec.podCIDR` with a value the CNI ignores. Advertising
+that stale value misroutes all return traffic, so CNI-IPAM sources take
+priority whenever their API exists. Both allocate dynamically (a node's
+first block appears with its first pod; blocks grow), so agents on such
+clusters re-resolve and re-advertise every 30 seconds, and the
+nothing-to-advertise startup guardrail becomes a warning there instead
+of an error. A missing-CRD probe is deliberately a List, so "not this
+CNI" (NotFound) is distinguishable from "CNI object not created yet"
+(empty result → stay in refresh mode).
+
+## D18: Masquerade exemptions are the cluster admin's job; the operator hints
+
+Transparent egress on vanilla Kubernetes requires the CNI to exempt
+remote-AS prefixes from pod-egress masquerade (kindnet: masq-agent
+RETURN rule; Calico: disabled IPPool with `disableBGPExport` — without
+the export opt-out BIRD advertises the pool and outranks the SCION
+route; Cilium: BPF ip-masq-agent `nonMasqueradeCIDRs`). The exempted
+prefixes are learned dynamically over SGRP and the exemptions are not
+observable through any API, so the operator cannot verify them: the
+platform condition stays honestly Unknown on vanilla, enriched with a
+best-effort CNI detection naming the exact recipe to check. Rejected:
+mutating CNI configuration from the operator (violates the D15
+non-mutation principle) and reporting fake ConditionTrue.

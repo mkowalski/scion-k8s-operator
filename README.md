@@ -67,8 +67,11 @@ The agent does not perform SNAT and does not modify `br-ex` or the OVN database.
 
 <img src="drawings/ovn-scion-traffic.svg" alt="OVN-Kubernetes pod traffic routed by learned prefixes through the node-local SCION tunnel without source NAT" style="width: 95%; max-width: 900px;">
 
-This source-preserving path passed the hardened live OpenShift e2e suite on
-2026-08-20. See the [implementation plan](docs/superpowers/plans/2026-08-20-ovn-local-gateway-egress.md).
+Vanilla Kubernetes is supported and continuously tested in CI (kind e2e on
+kindnetd, Calico, and Cilium; see `test/e2e/kind/`).
+This source-preserving path passed the hardened live OpenShift e2e suite,
+most recently on 2026-08-26 on a fresh topology. See the
+[implementation plan](docs/superpowers/plans/2026-08-20-ovn-local-gateway-egress.md).
 
 ## Quick start
 
