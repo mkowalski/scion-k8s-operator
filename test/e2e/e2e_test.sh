@@ -365,9 +365,19 @@ churn() {
     wait_agent_replaced "$node" "$old_uid" 600
     wait_agents_ready 600
     check_registration
-    log "re-checking learned route on $node"
-    node_has_tun "$node"
-    oc debug "node/$node" -q -- chroot /host ip -4 route get "$REMOTE_PING_IP" | grep -Eq "dev $TUN_NAME([[:space:]]|$)"
+    # Agent readiness is construction-based (decision D11): the tun and the
+    # re-learned route appear shortly after the pod turns Ready.
+    log "waiting for the learned route to return on $node"
+    local waited=0
+    until oc debug "node/$node" -q -- chroot /host ip -4 route get "$REMOTE_PING_IP" 2>/dev/null | \
+            grep -Eq "dev $TUN_NAME([[:space:]]|$)"; do
+        if [ "$waited" -ge 120 ]; then
+            die "route to $REMOTE_PING_IP does not select $TUN_NAME on $node 120s after agent churn"
+        fi
+        sleep 10
+        waited=$((waited + 10))
+    done
+    node_has_tun "$node" >/dev/null
     ok churn
 }
 
