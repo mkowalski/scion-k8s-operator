@@ -401,7 +401,7 @@ undeploy() {
         die "route to $REMOTE_PING_IP still selects $TUN_NAME after undeploy: $route"
     fi
     if [ "${KEEP_OPERATOR:-0}" != "1" ]; then
-        oc delete -k config/manifests
+        oc delete -k config/manifests --ignore-not-found
     else
         log "KEEP_OPERATOR=1: leaving operator installed"
         oc -n "$NAMESPACE" delete secret scion-registrar-token --ignore-not-found || true
