@@ -8,7 +8,7 @@ metadata:
     categories: Networking
     repository: https://github.com/mkowalski/scion-k8s-operator
     alm-examples: |-
-      [{"apiVersion":"scion.mkowalski.github.io/v1alpha1","kind":"ScionNetwork","metadata":{"name":"cluster"},"spec":{"bootstrap":{"mode":"url","discoveryURL":"http://scion-ds.example.org:8041"},"acceptPolicy":{"isdASes":["1-ff00:0:110"]}}}]
+      [{"apiVersion":"scion.org/v1alpha1","kind":"ScionNetwork","metadata":{"name":"cluster"},"spec":{"bootstrap":{"mode":"url","discoveryURL":"http://scion-ds.example.org:8041"},"acceptPolicy":{"isdASes":["1-ff00:0:110"]}}}]
 spec:
   displayName: SCION Operator
   description: |
@@ -41,7 +41,7 @@ spec:
       supported: true
   customresourcedefinitions:
     owned:
-      - name: scionnetworks.scion.mkowalski.github.io
+      - name: scionnetworks.scion.org
         version: v1alpha1
         kind: ScionNetwork
         displayName: SCION Network

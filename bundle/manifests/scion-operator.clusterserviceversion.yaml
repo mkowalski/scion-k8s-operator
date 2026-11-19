@@ -5,7 +5,7 @@ metadata:
     alm-examples: |-
       [
         {
-          "apiVersion": "scion.mkowalski.github.io/v1alpha1",
+          "apiVersion": "scion.org/v1alpha1",
           "kind": "ScionNetwork",
           "metadata": {
             "name": "cluster"
@@ -28,7 +28,7 @@ metadata:
       ]
     capabilities: Basic Install
     categories: Networking
-    createdAt: "2026-08-27T13:47:03Z"
+    createdAt: "2026-11-19T22:16:24Z"
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: unknown
     repository: https://github.com/mkowalski/scion-k8s-operator
@@ -42,7 +42,7 @@ spec:
         discovery, path acceptance policy, and per-node agent settings.'
       displayName: SCION Network
       kind: ScionNetwork
-      name: scionnetworks.scion.mkowalski.github.io
+      name: scionnetworks.scion.org
       version: v1alpha1
   description: |
     The SCION Operator makes every node of a Kubernetes cluster a first-class
@@ -56,7 +56,7 @@ spec:
       clusterPermissions:
       - rules:
         - apiGroups:
-          - scion.mkowalski.github.io
+          - scion.org
           resources:
           - scionnetworks
           - scionnetworks/status

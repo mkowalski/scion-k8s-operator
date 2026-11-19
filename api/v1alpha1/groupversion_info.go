@@ -1,6 +1,6 @@
 // Package v1alpha1 contains the ScionNetwork API.
 // +kubebuilder:object:generate=true
-// +groupName=scion.mkowalski.github.io
+// +groupName=scion.org
 package v1alpha1
 
 import (
@@ -10,7 +10,7 @@ import (
 
 var (
 	// GroupVersion is the group version used to register these objects.
-	GroupVersion = schema.GroupVersion{Group: "scion.mkowalski.github.io", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: "scion.org", Version: "v1alpha1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

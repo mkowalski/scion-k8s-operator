@@ -193,7 +193,7 @@ log "creating ScionNetwork"
 kubectl -n "$NAMESPACE" create secret generic scion-registrar-token \
     --from-literal=token="$REGISTRAR_TOKEN"
 kubectl apply -f - <<EOF
-apiVersion: scion.mkowalski.github.io/v1alpha1
+apiVersion: scion.org/v1alpha1
 kind: ScionNetwork
 metadata:
   name: cluster

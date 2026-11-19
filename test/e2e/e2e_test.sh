@@ -228,7 +228,7 @@ configure() {
         --from-literal=token="$REGISTRAR_TOKEN" \
         --dry-run=client -o yaml | oc apply -f -
     oc apply -f - <<EOF
-apiVersion: scion.mkowalski.github.io/v1alpha1
+apiVersion: scion.org/v1alpha1
 kind: ScionNetwork
 metadata:
   name: cluster

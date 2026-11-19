@@ -81,7 +81,7 @@ oc apply -f config/samples/scion_v1alpha1_scionnetwork.yaml   # edit first
 ```
 
 ```yaml
-apiVersion: scion.mkowalski.github.io/v1alpha1
+apiVersion: scion.org/v1alpha1
 kind: ScionNetwork
 metadata:
   name: cluster

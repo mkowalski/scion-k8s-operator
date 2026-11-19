@@ -103,10 +103,10 @@ route, and undeploy removes tunnel and registration state.
    tests, the envtest suite, `test/integration/discovery_test.sh`,
    `make bundle-check`, and the three image builds on push/PR.
    Aspirational: periodic e2e against a dev AS.
-3. **API group.** `scion.mkowalski.github.io` is a placeholder tied to a
-   personal GitHub Pages domain; revisit before any public release
-   (CRD group changes are breaking — do it before anyone depends on
-   v1alpha1).
+3. **API group.** Done 2026-11-19: renamed from the placeholder
+   `scion.mkowalski.github.io` to `scion.org` (decision D19). Breaking
+   with no migration path — acceptable because nothing external consumed
+   v1alpha1.
 4. **Upstream proposal.** File the TTL/heartbeat dynamic SIG
    self-registration design with scionproto/scion (draft paragraph in
    `as-registration.md`).

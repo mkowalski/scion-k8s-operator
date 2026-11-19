@@ -67,7 +67,7 @@ type ScionNetworkReconciler struct {
 
 // registrarFinalizer guards ScionNetwork deletion until the node SIG set
 // has been deregistered from the AS-side registrar.
-const registrarFinalizer = "scion.mkowalski.github.io/registrar-cleanup"
+const registrarFinalizer = "scion.org/registrar-cleanup"
 
 func (r *ScionNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	sn := &v1alpha1.ScionNetwork{}
