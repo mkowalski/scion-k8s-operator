@@ -392,10 +392,17 @@ undeploy() {
         '{}'|'{}'$'\n'|null|'') ;;
         *) die "registrar managed set not empty after undeploy: $sigs" ;;
     esac
-    log "checking $TUN_NAME is gone on node $node"
-    if node_has_tun "$node" >/dev/null 2>&1; then
-        die "$TUN_NAME still present on node $node after undeploy"
-    fi
+    # The DaemonSet object disappears before its pods finish terminating,
+    # and the agent removes the tun on shutdown.
+    log "waiting for $TUN_NAME to disappear on node $node"
+    waited=0
+    while node_has_tun "$node" >/dev/null 2>&1; do
+        if [ "$waited" -ge 120 ]; then
+            die "$TUN_NAME still present on node $node 120s after undeploy"
+        fi
+        sleep 10
+        waited=$((waited + 10))
+    done
     route=$(oc debug "node/$node" -q -- chroot /host ip -4 route get "$REMOTE_PING_IP" 2>/dev/null || true)
     if printf '%s\n' "$route" | grep -Eq "dev $TUN_NAME([[:space:]]|$)"; then
         die "route to $REMOTE_PING_IP still selects $TUN_NAME after undeploy: $route"
