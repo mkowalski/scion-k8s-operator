@@ -28,7 +28,7 @@ COPY internal/registrar internal/registrar
 RUN CGO_ENABLED=0 go build -o /out/scion-registrar ./cmd/registrar
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal
-RUN microdnf install -y python3 iproute procps-ng nftables && microdnf clean all
+RUN microdnf install -y python3 iproute procps-ng nftables openssl && microdnf clean all
 COPY --from=scion-build /out/ /usr/local/bin/
 COPY --from=registrar-build /out/scion-registrar /usr/local/bin/scion-registrar
 COPY hack/dev-scion-topology/serve-discovery.py /usr/local/bin/serve-discovery.py

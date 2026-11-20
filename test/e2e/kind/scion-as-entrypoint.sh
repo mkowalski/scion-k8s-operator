@@ -4,7 +4,7 @@
 # and runs every AS-side process in this single network namespace:
 #   cs-a, br-a, dispatcher-a  — AS A control plane (cluster nodes join here)
 #   cs-b, br-b, daemon-b, sig-b — AS B, the remote SCION site
-#   discovery (8041), registrar (8642), remote HTTP echo (18080)
+#   discovery (8041), registrar (8642, HTTPS), remote HTTP echo (18080)
 # The remote echo listens on REMOTE_PING_IP (a dummy interface); an nftables
 # guard drops packets to it that did not arrive through the sigb tun, so a
 # successful request is proof the path traversed SCION.
@@ -164,6 +164,13 @@ nft add table inet scion-e2e
 nft add chain inet scion-e2e input '{ type filter hook input priority -5; policy accept; }'
 nft add rule inet scion-e2e input ip daddr "$REMOTE_PING_IP" iifname != "sigb" counter drop
 
+# The registrar serves HTTPS with a self-signed certificate for the AS
+# address; run.sh reads registrar.crt back and pins it in the operator's
+# credentials secret (key ca.crt).
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+    -days 2 -subj "/CN=scion-registrar" -addext "subjectAltName=IP:$AS_IP" \
+    -keyout "$W/registrar.key" -out "$W/registrar.crt" 2>/dev/null
+
 # --- run everything -----------------------------------------------------------
 # The background job is the component binary itself (log prefixing runs in a
 # process substitution outside the job), so `wait -n` only reaps real
@@ -181,9 +188,10 @@ run discovery  python3 /usr/local/bin/serve-discovery.py "$W/as-a" "$W/as-a/cert
 run echo       python3 -m http.server "$REMOTE_TCP_PORT" --bind "$REMOTE_PING_IP"
 REGISTRAR_TOKEN="$REGISTRAR_TOKEN" run registrar scion-registrar \
     -topology "$W/as-a/topology.json" -listen "$AS_IP:8642" \
+    -tls-cert "$W/registrar.crt" -tls-key "$W/registrar.key" \
     -reload-cmd "pkill -HUP -x scion-control"
 
-echo "[entrypoint] SCION AS ready on $AS_IP (discovery :8041, registrar :8642, echo $REMOTE_PING_IP:$REMOTE_TCP_PORT)"
+echo "[entrypoint] SCION AS ready on $AS_IP (discovery :8041, registrar https :8642, echo $REMOTE_PING_IP:$REMOTE_TCP_PORT)"
 # Exit (and thereby fail the container) as soon as any component dies.
 wait -n
 echo "[entrypoint] a component exited; failing" >&2

@@ -45,6 +45,7 @@ cleanup() {
         kubectl -n "$NAMESPACE" logs deploy/scion-operator --tail=20 >&2 || true
         "$ENGINE" logs --tail 60 "$AS_NAME" >&2 || true
     fi
+    rm -f "${REGISTRAR_CA:-}"
     if [ "${KEEP:-0}" != "1" ]; then
         kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
         "$ENGINE" rm -f "$AS_NAME" >/dev/null 2>&1 || true
@@ -136,7 +137,17 @@ for _ in $(seq 24); do
     sleep 5
 done
 curl -fsS "http://$AS_IP:8041/topology" | grep -q "1-ff00:0:110" || die "discovery not serving"
-curl -fsS -H "Authorization: Bearer $REGISTRAR_TOKEN" "http://$AS_IP:8642/v1/sigs" >/dev/null || die "registrar not serving"
+# The registrar serves HTTPS with a certificate minted at container start;
+# pin it for both this script and the operator (secret key ca.crt).
+REGISTRAR_CA=$(mktemp)
+"$ENGINE" exec "$AS_NAME" cat /work/registrar.crt > "$REGISTRAR_CA" || die "could not read the registrar certificate"
+registrar_curl() {
+    curl -fsS --cacert "$REGISTRAR_CA" -H "Authorization: Bearer $REGISTRAR_TOKEN" "https://$AS_IP:8642/v1/sigs"
+}
+registrar_curl >/dev/null || die "registrar not serving"
+if curl -fsS --max-time 5 -H "Authorization: Bearer $REGISTRAR_TOKEN" "https://$AS_IP:8642/v1/sigs" >/dev/null 2>&1; then
+    die "registrar certificate verified without the pinned CA"
+fi
 
 # --- masquerade exclusion --------------------------------------------------------
 # Pod->external traffic is masqueraded by the CNI; traffic steered into
@@ -191,7 +202,8 @@ kubectl -n "$NAMESPACE" rollout status deploy/scion-operator --timeout=3m
 # --- ScionNetwork ------------------------------------------------------------------
 log "creating ScionNetwork"
 kubectl -n "$NAMESPACE" create secret generic scion-registrar-token \
-    --from-literal=token="$REGISTRAR_TOKEN"
+    --from-literal=token="$REGISTRAR_TOKEN" \
+    --from-file=ca.crt="$REGISTRAR_CA"
 kubectl apply -f - <<EOF
 apiVersion: scion.org/v1alpha1
 kind: ScionNetwork
@@ -207,7 +219,7 @@ spec:
     underlayCIDRs: ["$UNDERLAY_CIDR"]
   registrar:
     backend: http
-    endpoint: http://$AS_IP:8642
+    endpoint: https://$AS_IP:8642
     credentialsSecretRef:
       name: scion-registrar-token
 EOF
@@ -323,7 +335,7 @@ log "inbound: remote AS ($REMOTE_PING_IP) -> pod over SCION"
 # --- teardown ---------------------------------------------------------------------
 log "undeploy: ScionNetwork deletion must deregister and remove the tun"
 kubectl delete scionnetwork cluster --timeout=3m
-sigs=$(curl -fsS -H "Authorization: Bearer $REGISTRAR_TOKEN" "http://$AS_IP:8642/v1/sigs")
+sigs=$(registrar_curl)
 [ "$sigs" = "{}" ] || die "registrar set not empty after undeploy: $sigs"
 # The DaemonSet (and with it the tun) is removed by owner-reference GC,
 # which is asynchronous relative to the ScionNetwork deletion.

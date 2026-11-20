@@ -19,6 +19,10 @@ What it asserts:
 - metrics are HTTPS with TokenReview auth even without service-ca: the
   operator-issued CA (ConfigMap `scion-node-agent-metrics-ca`) verifies the
   endpoint, an authorized ServiceAccount token gets 200, no token gets 401,
+- the operator registers the node SIGs over HTTPS: the registrar serves a
+  self-signed certificate minted at container start, pinned through the
+  `ca.crt` key of the credentials secret (the script also checks that the
+  certificate does not verify without the pin),
 - deleting the ScionNetwork deregisters the SIGs and removes the tun.
 
 Masquerade: both CNIs masquerade pod→external traffic, which would break

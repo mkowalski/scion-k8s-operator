@@ -104,7 +104,8 @@ CONTAINER_ENGINE=podman KIND_EXPERIMENTAL_PROVIDER=podman \
     run — the agent's trust-cache self-heal (see state summary #3) makes
     this safe for deployed agents.
   - Handoff values: `DISCOVERY_URL=http://192.168.111.1:8041`,
-    `REGISTRAR_URL=http://192.168.111.1:8642`,
+    `REGISTRAR_URL=https://192.168.111.1:8642`,
+    `REGISTRAR_CA=/mnt/nvme0n1p1/dev-scripts/scion/registrar-tls/tls.crt`,
     `REGISTRAR_TOKEN=$(cat /mnt/nvme0n1p1/dev-scripts/scion/token)`,
     `REMOTE_ISD_AS=1-ff00:0:111`, `REMOTE_PING_IP=192.168.100.1`,
     `UNDERLAY_CIDR=192.168.111.0/24`, `REMOTE_SSH=local` on the hypervisor.
@@ -119,7 +120,7 @@ Full OpenShift e2e (run on the hypervisor, values above):
 
 ```sh
 KUBECONFIG=/root/dev-scripts/ocp/ostest/auth/kubeconfig \
-DISCOVERY_URL=... REMOTE_ISD_AS=... REGISTRAR_URL=... REGISTRAR_TOKEN=... \
+DISCOVERY_URL=... REMOTE_ISD_AS=... REGISTRAR_URL=... REGISTRAR_CA=... REGISTRAR_TOKEN=... \
 REMOTE_PING_IP=192.168.100.1 REMOTE_SSH=local ./test/e2e/e2e_test.sh
 ```
 
@@ -167,9 +168,9 @@ REMOTE_PING_IP=192.168.100.1 REMOTE_SSH=local ./test/e2e/e2e_test.sh
    (was the placeholder `scion.mkowalski.github.io`; see D19). Breaking,
    no migration: delete the old CRD before installing.
 3. `known-gaps.md` follow-ups in priority order — top items (the agent
-   stays privileged as root, D20): registrar TLS dogfooding in
-   the dev/kind topologies (feature shipped, topologies still run
-   plaintext with a warning), IPv6 dataplane, Anapaya registrar backend.
+   stays privileged as root, D20; the kind and dev-scripts topologies
+   run the registrar over pinned TLS since 2026-11-20): IPv6 dataplane,
+   Anapaya registrar backend.
 4. Parked threads above, as appetite allows.
 
 ## Conventions used throughout
