@@ -154,8 +154,8 @@ version `v1alpha1` (renamed from the placeholder
 
 - Dedicated `scion-system` namespace with privileged PSA labels.
 - The live RHCOS result requires the agent to run privileged as root; the
-  operator manages the corresponding SCC. A narrower SELinux policy remains
-  future hardening.
+  operator manages the corresponding SCC. This is the accepted end state
+  (decision D20).
 - Agent RBAC is read-only for its own Node data; operator Secret access is
   namespaced to `scion-system`.
 - Bootstrap pins and registrar credentials are mounted read-only. Plain SCION
@@ -248,8 +248,8 @@ into one standard mechanism.
 
 - scionproto `private/` and gateway internals can change; versions are pinned
   and bumps require local plus live validation.
-- Privileged root remains broader than desired; a tailored SELinux policy is
-  the path to capability-scoped operation.
+- The agent is privileged root by decision (D20); a compromised agent
+  therefore owns its node.
 - Per-node SIG fan-out is N nodes × M remote gateways and needs scale testing.
 - The HTTP registrar is plaintext unless deployed behind a trusted tunnel or
   TLS proxy; the Anapaya backend remains a stub.

@@ -25,7 +25,7 @@ OVN local-gateway routing, default `PodNetwork` route advertisements,
   underlay delivery, pod ICMP and TCP traversed `scion0` and remote `sigb`, and
   the remote capture retained the pod source address (`10.128.2.49`).
   SCC/SELinux answer: NET_ADMIN-only nonroot does NOT work on RHCOS — the
-  agent now runs privileged as root (TODO markers in `render.go`).
+  agent runs privileged as root (kept by decision D20).
 - **Registrar against a real control service** (was gap 3): operator→
   registrar HTTP sync, control-service topology reload, and remote-SIG
   gateway discovery of the registered node SIGs all observed working.
@@ -96,9 +96,9 @@ route, and undeploy removes tunnel and registration state.
 
 ## Follow-ups (rough priority order)
 
-1. Decide the privileged-vs-scoped-SELinux story for the agent (temporary
-   privileged fix shipped; a tailored SELinux policy + pre-chowned state
-   dir could restore NET_ADMIN-only).
+1. **Agent privileges.** Decided 2026-11-20 (D20): the agent stays
+   privileged as root, in line with other OpenShift networking
+   components. No scoped-SELinux work is planned.
 2. **CI.** `.github/workflows/ci.yaml` now runs gofmt/vet, build, unit
    tests, the envtest suite, `test/integration/discovery_test.sh`,
    `make bundle-check`, and the three image builds on push/PR.

@@ -166,8 +166,8 @@ REMOTE_PING_IP=192.168.100.1 REMOTE_SSH=local ./test/e2e/e2e_test.sh
 2. ~~API group rename~~ — done 2026-11-19: the group is now `scion.org`
    (was the placeholder `scion.mkowalski.github.io`; see D19). Breaking,
    no migration: delete the old CRD before installing.
-3. `known-gaps.md` follow-ups in priority order — top items: scoped
-   SELinux instead of the privileged agent, registrar TLS dogfooding in
+3. `known-gaps.md` follow-ups in priority order — top items (the agent
+   stays privileged as root, D20): registrar TLS dogfooding in
    the dev/kind topologies (feature shipped, topologies still run
    plaintext with a warning), IPv6 dataplane, Anapaya registrar backend.
 4. Parked threads above, as appetite allows.

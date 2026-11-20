@@ -207,3 +207,18 @@ external consumed `v1alpha1`, so an existing install deletes the old
 `scionnetworks.scion.mkowalski.github.io` CRD and applies the new one.
 Rejected: serving both groups during a transition (two CRDs for one
 singleton, for no existing consumer).
+
+## D20: The agent stays privileged as root
+
+The agent DaemonSet runs `privileged: true` as uid 0 with an
+operator-managed SCC. This began as a stopgap after the first live RHCOS
+run, where the nonroot `NET_ADMIN`-only design failed: the nonroot uid
+could not write the hostPath state dir, SELinux (`container_t`) denied
+hostPath writes and tun manipulation, and the tun forwarding sysctl needs
+a writable `/proc/sys`. It is now the accepted end state (owner decision,
+2026-11-20): networking components on OpenShift run as root, and the
+agent follows that convention. Rejected: non-privileged root with
+`NET_ADMIN` and `spc_t`, and nonroot with a tailored SELinux policy
+module — both add code or an install dependency for a posture the
+platform's own dataplane agents do not hold. Accepted cost: a compromised
+agent owns its node.
