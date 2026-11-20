@@ -15,7 +15,11 @@ success; the first failure prints `FAILED phase: <phase>` and exits non-zero.
   feature. `hack/dev-scion-topology` is suitable for component development but
   does not install the underlay-bypass guard.
 - The registrar service (`cmd/registrar`) running beside that AS's control
-  service, with `REGISTRAR_TOKEN` set AS-side.
+  service, with `REGISTRAR_TOKEN` set AS-side. Run it with
+  `--tls-cert`/`--tls-key` and pass its certificate as `REGISTRAR_CA`; the
+  dev-scripts topology does this by default. A plaintext `http://` registrar
+  still works but the suite warns, because the bearer token is then sent in
+  the clear.
 - Operator and agent images pushed to a registry the cluster can pull, and
   the manifests pointing at them. Two image knobs:
   - operator image: `spec.template.spec.containers[].image` in
@@ -38,8 +42,9 @@ success; the first failure prints `FAILED phase: <phase>` and exits non-zero.
 |-------------------|----------------------------------------------|-------------|
 | `DISCOVERY_URL`   | `configure`                                  | Bootstrap discovery server URL, e.g. `http://as-host:8041` |
 | `REMOTE_ISD_AS`   | `configure`                                  | Remote ISD-AS to accept prefixes from, e.g. `1-ff00:0:111` |
-| `REGISTRAR_URL`   | `configure`, `assert_registration`, `churn`, `undeploy` | Registrar base URL, e.g. `http://as-host:8642` |
+| `REGISTRAR_URL`   | `configure`, `assert_registration`, `churn`, `undeploy` | Registrar base URL, e.g. `https://as-host:8642` |
 | `REGISTRAR_TOKEN` | same as `REGISTRAR_URL`                      | Bearer token for the registrar |
+| `REGISTRAR_CA`    | optional (same as `REGISTRAR_URL`)           | PEM file trusted for an `https://` registrar (its server certificate or a private CA). Stored as key `ca.crt` of the operator's credentials secret and used for the suite's own registrar queries |
 | `REMOTE_PING_IP`  | `assert_dataplane`, `churn`, `undeploy`      | An IP behind the remote SIG |
 | `UNDERLAY_CIDR`   | optional (`configure`)                       | Cluster-to-AS transport CIDR excluded from learned SCION routes (default `192.168.111.0/24`) |
 | `REMOTE_SSH`      | `assert_dataplane`                           | SSH destination on the remote side for guard inspection, `sigb` captures, and inbound traffic. Set to `local` when running on the AS host. |
@@ -57,8 +62,9 @@ Full run:
 ```sh
 DISCOVERY_URL=http://192.0.2.10:8041 \
 REMOTE_ISD_AS=1-ff00:0:111 \
-REGISTRAR_URL=http://192.0.2.10:8642 \
+REGISTRAR_URL=https://192.0.2.10:8642 \
 REGISTRAR_TOKEN=devtoken \
+REGISTRAR_CA=./registrar.crt \
 REMOTE_PING_IP=203.0.113.5 \
 REMOTE_SSH=user@192.0.2.10 \
 ./test/e2e/e2e_test.sh
@@ -67,7 +73,7 @@ REMOTE_SSH=user@192.0.2.10 \
 Single phase (against an already-deployed setup):
 
 ```sh
-REGISTRAR_URL=http://192.0.2.10:8642 REGISTRAR_TOKEN=devtoken \
+REGISTRAR_URL=https://192.0.2.10:8642 REGISTRAR_TOKEN=devtoken REGISTRAR_CA=./registrar.crt \
 PHASES=assert_registration ./test/e2e/e2e_test.sh
 ```
 

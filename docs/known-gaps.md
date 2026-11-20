@@ -120,9 +120,10 @@ route, and undeploy removes tunnel and registration state.
 7. Operational polish: dual-stack/IPv6 support (policy engine is
    deliberately IPv4-only), scale measurement of per-node SIG session
    fan-out (N nodes × M remote SIGs). Registrar TLS is done
-   (`--tls-cert`/`--tls-key` server-side, `ca.crt` secret key for pinning),
-   but plaintext HTTP is still permitted with a warning; consider making
-   TLS mandatory outside dev. Agent metrics on :9465 are now HTTPS with
+   (`--tls-cert`/`--tls-key` server-side, `ca.crt` secret key for pinning)
+   and is what the kind e2e and the dev-scripts topology run; plaintext
+   HTTP is still permitted with a warning — consider making TLS
+   mandatory. Agent metrics on :9465 are now HTTPS with
    TokenReview/SAR scraper auth everywhere — service-ca on OpenShift,
    an operator-issued rotated certificate elsewhere (CA published in the
    scion-node-agent-metrics-ca ConfigMap).

@@ -58,13 +58,14 @@ Usage: [ENV...] $0
 Required environment (phase-dependent):
   DISCOVERY_URL    bootstrap discovery server URL      (configure)
   REMOTE_ISD_AS    remote ISD-AS to accept, e.g. 1-ff00:0:111  (configure)
-  REGISTRAR_URL    registrar base URL, e.g. http://as-host:8642  (configure, assert_registration, churn, undeploy)
+  REGISTRAR_URL    registrar base URL, e.g. https://as-host:8642  (configure, assert_registration, churn, undeploy)
   REGISTRAR_TOKEN  registrar bearer token              (configure, assert_registration, churn, undeploy)
   REMOTE_PING_IP   IP behind the remote SIG to ping    (assert_dataplane)
   UNDERLAY_CIDR    Cluster-to-AS transport CIDR         (configure; default: 192.168.111.0/24)
   REMOTE_SSH       SSH destination for the AS host     (assert_dataplane)
 
 Optional:
+  REGISTRAR_CA     PEM file trusted for an https REGISTRAR_URL (server certificate or private CA)
   REMOTE_TCP_PORT  Remote SCION TCP test port (default: $REMOTE_TCP_PORT)
   NON_SCION_IP     Control destination that must avoid scion0 (default: $NON_SCION_IP)
   TEST_IMAGE       test pod image (default: $TEST_IMAGE)
@@ -156,7 +157,8 @@ require_source_preserving_host_routing() {
 }
 
 registrar_sigs() {
-    curl -fsS -H "Authorization: Bearer $REGISTRAR_TOKEN" "$REGISTRAR_URL/v1/sigs"
+    curl -fsS ${REGISTRAR_CA:+--cacert "$REGISTRAR_CA"} \
+        -H "Authorization: Bearer $REGISTRAR_TOKEN" "$REGISTRAR_URL/v1/sigs"
 }
 
 wait_agents_ready() {
@@ -224,8 +226,16 @@ deploy() {
 configure() {
     require_source_preserving_host_routing
     require_env DISCOVERY_URL REMOTE_ISD_AS REGISTRAR_URL REGISTRAR_TOKEN
+    case "$REGISTRAR_URL" in
+        https://*) ;;
+        *) log "WARNING: REGISTRAR_URL is not https; the bearer token crosses the network in plaintext" ;;
+    esac
+    if [ -n "${REGISTRAR_CA:-}" ] && [ ! -r "$REGISTRAR_CA" ]; then
+        die "REGISTRAR_CA is not a readable file: $REGISTRAR_CA"
+    fi
     oc -n "$NAMESPACE" create secret generic scion-registrar-token \
         --from-literal=token="$REGISTRAR_TOKEN" \
+        ${REGISTRAR_CA:+--from-file=ca.crt="$REGISTRAR_CA"} \
         --dry-run=client -o yaml | oc apply -f -
     oc apply -f - <<EOF
 apiVersion: scion.org/v1alpha1
