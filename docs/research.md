@@ -120,7 +120,7 @@ Consequences:
   a Red Hat-curated list — not usable for arbitrary RPMs.
 - **RHCOS security result:** capability-only `container_t` could not access the
   host tun/state path. The shipped agent uses the operator-managed privileged
-  SCC and runs as root; a tailored SELinux policy remains future hardening.
+  SCC and runs as root; this is the accepted end state (decision D20).
 - **OVN-Kubernetes interaction (live-validated):** shared gateway mode
   (`routingViaHost: false`) bypasses host routes. Transparent SCION egress
   requires local gateway mode (`routingViaHost: true`), while source

@@ -83,12 +83,12 @@ func probe(path string, tls bool) *corev1.Probe {
 func DaemonSet(sn *v1alpha1.ScionNetwork, image string, forbiddenCIDRs []string, metricsTLS bool) *appsv1.DaemonSet {
 	hostPathChar := corev1.HostPathCharDev
 	hostPathDir := corev1.HostPathDirectoryOrCreate
-	// TODO(live-e2e): NET_ADMIN-only is insufficient on RHCOS: the
-	// distroless nonroot uid cannot write the root-owned hostPath state
-	// dir and SELinux (container_t) denies hostPath writes and tun
-	// manipulation. Run privileged (as root) like other host-network
-	// dataplane DaemonSets (e.g. OVN-K) until a scoped SELinux policy +
-	// chown-ed state dir approach is implemented.
+	// The agent runs privileged as root, like other host-network
+	// dataplane DaemonSets on OpenShift (e.g. OVN-K); decision D20.
+	// NET_ADMIN-only nonroot is insufficient on RHCOS: the nonroot uid
+	// cannot write the root-owned hostPath state dir, SELinux
+	// (container_t) denies hostPath writes and tun manipulation, and the
+	// tun forwarding sysctl needs a writable /proc/sys.
 	priv := true
 	rootUID := int64(0)
 	// Intentionally unset (agent defaults are correct as-is):
@@ -260,12 +260,11 @@ func SCC() *unstructured.Unstructured {
 		"allowHostNetwork":         true,
 		"allowHostPID":             false,
 		"allowHostPorts":           true,
-		// TODO(live-e2e): privileged required on RHCOS; see DaemonSet.
+		// Privileged is required on RHCOS; see DaemonSet (decision D20).
 		"allowPrivilegeEscalation": true,
 		"allowPrivilegedContainer": true,
 		// No extra capabilities: they are moot while the container runs
-		// privileged. When the nonroot TODO above lands, NET_ADMIN (tun
-		// creation/route programming) will need to come back here.
+		// privileged.
 		"allowedCapabilities":    []interface{}{},
 		"fsGroup":                map[string]interface{}{"type": "RunAsAny"},
 		"readOnlyRootFilesystem": false,
