@@ -195,3 +195,15 @@ platform condition stays honestly Unknown on vanilla, enriched with a
 best-effort CNI detection naming the exact recipe to check. Rejected:
 mutating CNI configuration from the operator (violates the D15
 non-mutation principle) and reporting fake ConditionTrue.
+
+## D19: API group is `scion.org`
+
+The CRD group was the placeholder `scion.mkowalski.github.io`, tied to a
+personal GitHub Pages domain. It is now `scion.org` (owner decision,
+2026-11-19), applied to the CRD, RBAC, OLM bundle, samples, e2e suites
+and the registrar finalizer (`scion.org/registrar-cleanup`). The change
+is breaking and ships without a conversion or migration path: nothing
+external consumed `v1alpha1`, so an existing install deletes the old
+`scionnetworks.scion.mkowalski.github.io` CRD and applies the new one.
+Rejected: serving both groups during a transition (two CRDs for one
+singleton, for no existing consumer).

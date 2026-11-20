@@ -10,7 +10,7 @@ metadata:
   name: scion-operator
 rules:
   # Own API.
-  - apiGroups: ["scion.mkowalski.github.io"]
+  - apiGroups: ["scion.org"]
     resources: ["scionnetworks", "scionnetworks/status", "scionnetworks/finalizers"]
     verbs: ["*"]
   # Agent DaemonSet (operator-managed).

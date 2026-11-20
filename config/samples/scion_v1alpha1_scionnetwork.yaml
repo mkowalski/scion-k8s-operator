@@ -1,4 +1,4 @@
-apiVersion: scion.mkowalski.github.io/v1alpha1
+apiVersion: scion.org/v1alpha1
 kind: ScionNetwork
 metadata:
   name: cluster

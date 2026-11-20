@@ -103,9 +103,9 @@ Scaffolded with operator-sdk/kubebuilder (controller-runtime). Duties:
 ### 3.2 ScionNetwork CRD
 
 Cluster-scoped, singleton named `cluster` (same convention as OpenShift
-`Network`/`Proxy` config objects). API group: `scion.mkowalski.github.io`,
-version `v1alpha1` (group is user-controlled via GitHub Pages domain;
-revisit before any public release).
+`Network`/`Proxy` config objects). API group: `scion.org`,
+version `v1alpha1` (renamed from the placeholder
+`scion.mkowalski.github.io` on 2026-11-19; decision D19).
 
 `spec`:
 - `bootstrap`: discovery mode (`url` | `dns` | `dhcp` | `mdns`), mode-specific

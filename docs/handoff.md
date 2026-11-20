@@ -163,10 +163,9 @@ REMOTE_PING_IP=192.168.100.1 REMOTE_SSH=local ./test/e2e/e2e_test.sh
 1. Re-verify baseline: CI green on `main`; run one local kind e2e leg;
    optionally the full ostest suite with freshly built images (see above —
    the last live-validated images predate the vanilla work).
-2. **API group rename** (`scion.mkowalski.github.io` is a placeholder):
-   needs a naming decision first; breaking CRD change, so do it before
-   anything external consumes v1alpha1. Cheapest now, more expensive
-   every week.
+2. ~~API group rename~~ — done 2026-11-19: the group is now `scion.org`
+   (was the placeholder `scion.mkowalski.github.io`; see D19). Breaking,
+   no migration: delete the old CRD before installing.
 3. `known-gaps.md` follow-ups in priority order — top items: scoped
    SELinux instead of the privileged agent, registrar TLS dogfooding in
    the dev/kind topologies (feature shipped, topologies still run
